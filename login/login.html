@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!-- Prevents mobile browsers from zooming out to show the full desktop layout. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Orbitron is used for the "GameScape" heading.
+       Quicksand is used for all body text and input fields.
+       Both are loaded from Google Fonts because they're not system fonts. -->
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./login.css">
+  <title>Login</title>
+</head>
+<body>
+  <!-- The glass card that contains the entire login form.
+       This page runs inside an iframe — the card floats over whatever
+       is behind the iframe, which is the blurred map overlay. -->
+  <div class="login-container">
+
+    <!-- Closes the modal by calling closeModalPage() on the parent window (map.js).
+         window.parent is used because this page is inside an iframe. -->
+    <button class="close-btn" onclick="window.parent.closeModalPage()">✕</button>
+
+    <!-- The "GameScape" heading split into two spans so "Game" and "Scape"
+         can each have a slightly different gradient color. -->
+    <div class="heading">
+      <span class="heading-main">Game</span>
+      <span class="heading-accent">Scape</span>
+    </div>
+    <div class="subheading">Sign in to continue</div>
+
+    <!-- Error message box. Hidden by default (display:none in CSS).
+         login.js sets its text and makes it visible when the server returns an error. -->
+    <div id="errorMsg" class="error-msg"></div>
+
+    <!-- The login form. login.js listens for the submit event and handles it
+         with fetch — the form never does a real page navigation. -->
+    <form class="form" id="loginForm">
+      <!-- Accepts either username or email so the user doesn't need to
+           remember which one they registered with. -->
+      <input required class="input" type="text" name="username_or_email" id="username_or_email" placeholder="Username or Email">
+      <input required class="input" type="password" name="password" id="password" placeholder="Password">
+
+      <!-- Placeholder link — password reset is not yet implemented. -->
+      <span class="forgot-password"><a href="#">Forgot Password?</a></span>
+
+      <!-- login.js disables this button and changes its text to "Signing in..."
+           while the fetch request is in progress to prevent double-submissions. -->
+      <button class="login-button" type="submit" id="loginBtn">Sign In</button>
+    </form>
+
+    <!-- Visual separator between the form and the social login buttons.
+         The horizontal lines are drawn with CSS ::before and ::after on .divider. -->
+    <div class="divider"><span>or</span></div>
+
+    <!-- Social login buttons. These are currently decorative — the OAuth
+         integrations are not yet implemented. The SVG icons are inline
+         so they don't require any image files. -->
+    <div class="social-accounts">
+      <!-- Google -->
+      <button class="social-button google">
+        <svg class="svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 488 512"><path d="M488 261.8C488 403.3 391.1 504 248 504 110.8 504 0 393.2 0 256S110.8 8 248 8c66.8 0 123 24.5 166.3 64.9l-67.5 64.9C258.5 52.6 94.3 116.6 94.3 256c0 86.5 69.1 156.6 153.7 156.6 98.2 0 135-70.4 140.8-106.9H248v-85.3h236.1c2.3 12.7 3.9 24.9 3.9 41.4z"/></svg>
+      </button>
+      <!-- Apple -->
+      <button class="social-button apple">
+        <svg class="svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 384 512"><path d="M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z"/></svg>
+      </button>
+      <!-- X (formerly Twitter) -->
+      <button class="social-button twitter">
+        <svg class="svg" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><path d="M389.2 48h70.6L305.6 224.2 487 464H345L233.7 318.6 106.5 464H35.8L200.7 275.5 26.8 48H172.4L272.9 180.9 389.2 48zM364.4 421.8h39.1L151.1 88h-42L364.4 421.8z"/></svg>
+      </button>
+    </div>
+
+    <!-- Swap the iframe to the register page without closing and reopening
+         the modal. openModalPage() is called on the parent window (map.js).
+         return false prevents the href="#" from scrolling the page. -->
+    <div class="signup-prompt">
+      Don't have an account?
+      <a href="#" onclick="window.parent.openModalPage('register/register.html'); return false;">Sign up</a>
+    </div>
+  </div>
+
+  <!-- login.js attaches to the form submit event and handles the fetch request,
+       success state, and error display. Loaded at the bottom so the form
+       elements exist before the script runs. -->
+  <script src="./login.js"></script>
+</body>
+</html>

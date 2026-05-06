@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!-- Prevents mobile browsers from zooming out to show the full desktop layout. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Orbitron for section titles and the username heading.
+       Quicksand for body text and input fields. Both from Google Fonts. -->
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./profile.css">
+  <title>GameScape - My Profile</title>
+</head>
+<body>
+  <!-- The glass profile card. Runs inside an iframe so it floats over the
+       blurred map behind it. Has two visual states: view mode (read-only)
+       and edit mode (text inputs visible). profile.js toggles between them. -->
+  <div class="profile-container">
+
+    <!-- &#x2715; is the HTML entity for ✕. Closes the modal by calling
+         closeModalPage() on the parent window (map.js) since this page
+         is inside an iframe. -->
+    <button class="close-btn" onclick="window.parent.closeModalPage()">&#x2715;</button>
+
+    <!-- 
+         AVATAR + NAME + ACTION ICONS
+         The avatar is a DiceBear-generated SVG seeded with the username.
+         profile.js updates the src with the actual username after loading.
+         The three icon buttons below the name are for edit, share, and view-as-public. -->
+    <div class="avatar-box">
+      <div class="avatar-circle">
+        <!-- Placeholder avatar shown while profile.js fetches the session.
+             The seed "default" is replaced with the real username on load. -->
+        <img id="profileAvatar"
+             src="https://api.dicebear.com/7.x/avataaars/svg?seed=default"
+             alt="Profile avatar"
+             class="avatar-img">
+      </div>
+      <!-- Filled by profile.js with the logged-in username. Shows "Loading..."
+           until the /api/me fetch completes. -->
+      <h3 id="profileName">Loading...</h3>
+
+      <!-- Three small circular icon buttons. Each wraps an inline SVG icon
+           so no image files are needed. -->
+      <div class="action-icons">
+
+        <!-- Edit button. Clicking it calls toggleEdit() which swaps the
+             read-only view for editable text inputs. profile.js highlights
+             this button's background while edit mode is active. -->
+        <div class="icon-link" id="editBtn" title="Edit profile" onclick="toggleEdit()">
+          <!-- Pencil/edit icon (two overlapping rectangles with a pen path). -->
+          <svg viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+        </div>
+
+        <!-- Share button. Decorative for now — share functionality is not yet implemented. -->
+        <div class="icon-link" title="Share profile">
+          <!-- Share icon (three circles connected by lines). -->
+          <svg viewBox="0 0 24 24"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        </div>
+
+        <!-- Eye toggle — click to hide/show yourself on the map -->
+        <div class="icon-link" id="visibilityBtn" title="Hide me from map">
+          <svg viewBox="0 0 24 24"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </div>
+      </div>
+    </div>
+
+    <!-- 
+         GAMES SECTION
+         Two sub-elements that are swapped by profile.js:
+         - #gamesView: the rendered read-only view (icons + captions).
+         - #gamesEdit: the text input shown in edit mode.
+         The default content of #gamesView is the "No games added yet" hint.
+         profile.js replaces that with icon figures once data loads. -->
+    <div class="game-box">
+      <!-- Read-only view. profile.js injects game icon figures here. -->
+      <div id="gamesView" style="width:100%; display:flex; justify-content:space-around; flex-wrap:wrap; gap:8px; align-items:center;">
+        <span class="empty-hint">No games added yet</span>
+      </div>
+      <!-- Edit mode input. Hidden until the user clicks the edit button.
+           Accepts a comma-separated list (e.g. "Valorant, CS2, Minecraft"). -->
+      <div id="gamesEdit" style="display:none; width:100%; padding:4px 0;">
+        <input class="edit-input" type="text" id="gamesInput" placeholder="e.g. Valorant, CS2, Minecraft">
+        <p class="edit-hint">Separate games with a comma</p>
+      </div>
+    </div>
+
+    <!-- 
+         ABOUT ME SECTION
+         Similarly split into a read-only paragraph and an edit textarea.
+         profile.js swaps them based on editMode state. -->
+    <div class="about-box">
+      <p class="about-title">About Me</p>
+      <!-- Read-only view. profile.js sets its textContent from the DB. -->
+      <p id="aboutView" class="about-text empty-hint">No description yet</p>
+      <!-- The textarea shown in edit mode. rows="3" sets the initial height.
+           resize: none is set in CSS so the user can't drag it taller. -->
+      <textarea class="edit-input" id="aboutEdit" rows="3"
+                placeholder="Tell other players about yourself..."
+                style="display:none;"></textarea>
+    </div>
+
+    <!-- 
+         INTERESTS SECTION
+         Same read-only / edit-mode split as games and about me.
+         Interests are also stored as a comma-separated string.-->
+    <div class="interests-box">
+      <!-- Read-only view. profile.js injects interest icon figures here. -->
+      <div id="interestsView" style="display:flex; justify-content:center; gap:20px; flex-wrap:wrap; align-items:center;">
+        <span class="empty-hint">No interests added yet</span>
+      </div>
+      <!-- Edit mode input. Hidden until edit mode is active. -->
+      <div id="interestsEdit" style="display:none; width:100%; padding:4px 0;">
+        <input class="edit-input" type="text" id="interestsInput" placeholder="e.g. PC Gaming, Controller">
+        <p class="edit-hint">Separate interests with a comma</p>
+      </div>
+    </div>
+
+    <!-- Save button. Hidden by default (display:none in CSS) and shown by
+         profile.js only when edit mode is active. Calls saveProfile() which
+         sends the updated data to /api/profile. -->
+    <button class="save-btn" id="saveBtn" onclick="saveProfile()">Save Profile</button>
+  </div>
+
+  <!-- profile.js runs immediately on load. It calls /api/me to get the username,
+       then tries /api/profile for the extended data. Loaded at the bottom so
+       all elements exist before the script references them. -->
+  <script src="./profile.js"></script>
+</body>
+</html>
