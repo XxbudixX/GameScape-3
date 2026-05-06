@@ -22,7 +22,6 @@ GameScape is a web app that lets gamers find other players near them on an inter
 /
 ├── app.py              Flask backend — all API routes
 ├── databas.py          Database connection helper
-├── config.ini          Database credentials (Supabase PostgreSQL)
 │
 ├── index.html          Main page — map, navbar, hamburger menu, filter
 ├── layout.css          Global styles (navbar, modal overlay, sidebar, filter)
