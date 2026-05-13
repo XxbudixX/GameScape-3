@@ -93,13 +93,13 @@ def add_game():
 
     data = request.get_json()
     name = data.get('name')
-    image = data.get('image_name')
+    image = data.get('image_path')
 
     conn, cur = connect_db()
 
     try:
         cur.execute(
-            "INSERT INTO games (name, image_path) VALUES (%s, %s)",
+            "INSERT INTO game (name, image_path) VALUES (%s, %s)",
             (name, image)
         )
         conn.commit()

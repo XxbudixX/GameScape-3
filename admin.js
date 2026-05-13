@@ -5,9 +5,9 @@ async function addGame() {
     const msgEL = document.getElementById('gameMsg')
     
     const name = nameInput.value.trim();
-    const image_name = imageInput.value.trim();
+    const image_path = imageInput.value.trim();
 
-    if(!name || !image_name){
+    if(!name || !image_path){
         msgEL.textContent = "Please fill in both fields."; 
         msgEL.style.color = 'red';
         return;
@@ -19,7 +19,7 @@ async function addGame() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             name: name,
-            image_name: image_name
+            image_path: image_path
         })
     });
 
