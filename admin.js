@@ -1,20 +1,53 @@
 document.addEventListener('DOMContentLoaded', checkAdmin);
 async function addGame() {
-    const res = await fetch('/api/admin/add_game', {
+    const nameInput = document.getElementById('gameNameInput')
+    const imageInput = document.getElementById('gameImageInput')
+    const msgEL = document.getElementById('gameMsg')
+    
+    const name = nameInput.value.trim();
+    const image_name = imageInput.value.trim();
+
+    if(!name || !image_name){
+        msgEL.textContent = "Please fill in both fields."; 
+        msgEL.style.color = 'red';
+        return;
+    }
+    
+    try{
+        const res = await fetch('/api/admin/add_game', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-            name: 'CS2',
-            image_name: 'cs.png'
+            name: name,
+            image_name: image_name
         })
     });
 
     const data = await res.json();
+    
     if (data.success) {
-        alert("Success!");
-    } else {
-        alert("Error: " + data.error);
-    }}
+        msgEL.textContent = "Game added successfully!";
+        msgEL.style.color = 'green';
+        //rensa fälten efter lyckad tillläggning
+        nameInput.value = '';
+        imageInput.value = '';
+    } 
+    else {
+        msgEL.textContent = "Error: " + data.error;
+        msgEL.style.color = 'red';
+    }
+    }catch (error){
+        msgEL.textContent = 'network error.';
+        msgEL.style.color = 'red'
+    }
+}
+document.addEventListener('DOMContentLoaded', () => {
+    checkAdmin(); //din befintliga check
+    const submitBtn = document.getElementById('submitGameBtn');
+    if (submitBtn){
+        submitBtn.addEventListener('click', addGame);
+    }
+})
 
 
 async function loadEvents() {
