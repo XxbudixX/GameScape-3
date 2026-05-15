@@ -2,125 +2,109 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <!-- Prevents mobile browsers from zooming out to show the full desktop layout. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GameScape - Chat</title>
-
-  <!-- Orbitron for the "Chats" panel heading. Quicksand for everything else. -->
+  <!-- Orbitron for the "Chats" heading, Quicksand for all body text -->
   <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="chat.css">
+  <!-- Single CSS file (all chat styles merged into main.css) -->
+  <link rel="stylesheet" href="/static/css/main.css">
 </head>
-<body>
-  <!-- The full-screen chat wrapper. chat.css makes this a vertical flex column
-       that fills 100vh so the top bar, layout area, and nothing else exists
-       outside this div. z-index: 1 keeps it above the background light beams. -->
+<!-- chat-page class scopes the animated background blobs and mobile panels -->
+<body class="chat-page">
+
   <div class="chat-fullscreen">
 
-    <!-- ============================================================
-         TOP BAR
-         Spans the full width at the top of the page.
-         Left side: back button that navigates to the map.
-         Right side: connection status, username field, and connect button.
-         ============================================================ -->
+    <!--  TOP BAR 
+         Back button on the left, connection status on the right.
+         The old project had a manual "Connect" button removed here because
+         app.js now auto-connects the WebSocket on session load.
+         URL UPDATED: ../index.html → /map (Flask route).
+     -->
     <div class="top-bar">
-      <!-- Navigates back to the main map page.
-           Uses window.location.href instead of a link so it can be styled as a div. -->
-      <div class="back-button" onclick="window.location.href='../index.html'">
+      <div class="back-button" onclick="window.location.href='/map'">
         <span>←</span> Back to Map
       </div>
-
-      <!-- The connection control area on the right side of the top bar. -->
-      <div class="connection-area">
-        <!-- Status badge. chat.js updates its text and class between
-             "Offline" (.status-offline) and "Connected as {name}" (.status-online). -->
-        <span id="connectionStatus" class="status-offline">Offline</span>
-
-        <!-- Username input for manually connecting via WebSocket.
-             chat.js makes this read-only and pre-fills it when the user is
-             already logged in via the Flask session. -->
-        <input type="text" id="usernameInput" placeholder="Username" class="username-field">
-
-        <!-- Toggles the WebSocket connection. chat.js changes its label
-             between "Connect" and "Disconnect" depending on the current state. -->
-        <button id="connectBtn" class="connect-btn">Connect</button>
-      </div>
+      <!-- Connection status is set dynamically by app.js initChat() -->
+      <span id="connectionStatus" class="status-offline">Offline</span>
     </div>
 
-    <!-- ============================================================
-         MAIN CHAT LAYOUT
-         A horizontal flex row that fills all remaining vertical space.
-         Left panel: contacts list (fixed width).
-         Right panel: active conversation (fills remaining space).
-         ============================================================ -->
     <div class="chat-layout">
 
-      <!-- ============================================================
-           CONTACTS PANEL (left)
-           Shows everyone the user has previously messaged (from the DB)
-           plus anyone currently online via WebSocket.
-           Clicking a contact opens their conversation on the right.
-           ============================================================ -->
-      <div class="contacts-panel">
+      <!--  CONTACTS PANEL 
+           id="contactsPanel" is required by app.js for
+           mobile panel switching (panel-hidden / panel-visible classes).
+
+           The unified search bar does two things simultaneously:
+             1. Filters existing contacts client-side (instant)
+             2. Queries /api/users/search for new users (debounced 300ms)
+           Results from the DB search appear in the #userSearchResults dropdown.
+       -->
+      <div class="contacts-panel" id="contactsPanel">
         <div class="contacts-header">
+          <!-- Orbitron heading matching the old chat page -->
           <h3>Chats</h3>
-          <!-- Live search input. chat.js filters the visible contact items
-               as the user types, without touching the underlying data. -->
-          <div class="search-box">
-            <input type="text" id="searchInput" placeholder="Search friends...">
+
+          <!-- Search wrap with SVG icon replaces old plain .search-box -->
+          <div class="search-wrap">
+            <!-- Magnifying glass icon positioned inside the input via CSS -->
+            <svg class="search-icon" viewBox="0 0 24 24">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              type="text"
+              id="searchInput"
+              placeholder="Search or start new chat…"
+              autocomplete="off"
+            >
           </div>
+
+          <!-- Dropdown for DB user search results.
+               Hidden by default; app.js shows it when the search finds new users. -->
+          <div id="userSearchResults" class="user-search-results" style="display:none;"></div>
         </div>
 
-        <!-- The scrollable area where contact rows are rendered by chat.js.
-             The placeholder text is replaced once contacts load from the DB or
-             the WebSocket connection is established. -->
         <div class="contacts-list" id="contactsList">
-          <div class="contact-placeholder">Connect to see online friends</div>
+          <div class="contact-placeholder">Loading chats…</div>
         </div>
       </div>
 
-      <!-- ============================================================
-           CONVERSATION PANEL (right)
-           Fills all horizontal space to the right of the contacts panel.
-           Contains three stacked sections: a header, the message list,
-           and the message input bar. chat.js fills and manages all three.
-           ============================================================ -->
-      <div class="conversation-panel">
+      <!--  CONVERSATION PANEL 
+           id="conversationPanel" is required for mobile panel switching.
+           On mobile this slides in from the right when a contact is tapped.
+       -->
+      <div class="conversation-panel" id="conversationPanel">
 
-        <!-- Header shows who the current conversation is with.
-             #currentChatName is updated by chat.js when a contact is clicked. -->
         <div class="conversation-header">
+          <!--  Mobile back arrow hidden on desktop via CSS.
+               showContactsPanel() is exposed globally by app.js. -->
+          <button class="mobile-back-btn" id="mobileBackBtn" onclick="showContactsPanel()">←</button>
+
           <div class="user-info">
-            <!-- Placeholder avatar circle. No image is loaded — the gradient
-                 background in CSS serves as the visual. -->
-            <div class="user-avatar"></div>
-            <!-- Updated by chat.js with the selected contact's username. -->
-            <span class="user-name" id="currentChatName">Select a friend</span>
+            <!-- Avatar div app.js sets textContent to the first letter of the partner's username -->
+            <div class="user-avatar" id="chatPartnerAvatar"></div>
+            <div class="user-name-block">
+              <span class="user-name" id="currentChatName">Select a friend</span>
+              <!-- Online status shown under the name updated by app.js updatePartnerStatus() -->
+              <span class="partner-status" id="chatPartnerStatus"></span>
+            </div>
           </div>
         </div>
 
-        <!-- The scrollable message list. chat.js clears and rebuilds this
-             every time a contact is clicked or a new message arrives.
-             The placeholder text disappears once a conversation is opened. -->
         <div class="messages-container" id="messagesContainer">
-          <div class="placeholder-message">Connect and click on a friend to start chatting</div>
+          <div class="placeholder-message">Select a contact to start chatting</div>
         </div>
 
-        <!-- The message input bar at the bottom of the conversation panel.
-             Both the input and the button start disabled — chat.js enables them
-             once a conversation is opened. The button also responds to Enter key
-             via a keypress listener in chat.js. -->
         <div class="message-input-area">
-          <input type="text" id="messageInput" placeholder="Type a message..." disabled>
+          <input type="text" id="messageInput" placeholder="Type a message…" disabled>
           <button id="sendBtn" disabled>Send</button>
         </div>
       </div>
+
     </div>
   </div>
 
-  <!-- chat.js manages: session check, DB contact loading, WebSocket connection,
-       message rendering, send logic, and contact list filtering.
-       Loaded at the bottom so all elements exist before the script runs. -->
-  <script src="chat.js"></script>
+  <script src="/static/js/app.js"></script>
 </body>
 </html>

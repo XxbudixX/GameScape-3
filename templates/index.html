@@ -2,101 +2,68 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <!-- Ensures the page scales correctly on mobile instead of zooming out to fit a desktop layout. -->
+  <!-- Ensures the page scales correctly on mobile instead of zooming out to fit a desktop layout -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>GameScape - Find Gamers Near You</title>
 
-  <!-- MapLibre GL is the open-source map library used to render the interactive map.
-       The CSS file must be loaded before the JS so the map renders correctly with no
-       style flash. Both are loaded from a public CDN so no local installation is needed. -->
-  <link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet" />
+  <!-- MapLibre GL open-source map library. CSS must load before JS to avoid style flash. -->
+  <link href="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.css" rel="stylesheet">
   <script src="https://unpkg.com/maplibre-gl@latest/dist/maplibre-gl.js"></script>
 
-  <!-- layout.css: page structure, navbar, modal overlay, sidebar, player count badge, filters.
-       map.css: overrides MapLibre's default popup and control styles.
-       sidebar.css: the hamburger menu panel that floats in the center of the screen. -->
-  <link rel="stylesheet" href="layout.css">
-  <link rel="stylesheet" href="map.css">
-  <link rel="stylesheet" href="sidebar.css">
-  <link rel="stylesheet" href="admin.css">
-  <link rel="stylesheet" href="event.css">
+  <!-- Orbitron for the GameScape logo, Quicksand for body text -->
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Single CSS file (layout, map, sidebar, admin, event, custom-select all merged into main.css) -->
+  <link rel="stylesheet" href="/static/css/main.css">
 </head>
 <body>
 
-  <!-- ============================================================
+  <!-- 
        NAVBAR
-       The bar at the top of the page. Three sections:
-       left (hamburger), center (logo), right (avatar).
-       All three are siblings in a flex row defined in layout.css.
-       ============================================================ -->
+       Left: hamburger button   Center: logo   Right: profile avatar
+       Event listeners attached in map.js (not inline) for clean HTML.
+   -->
   <nav class="navbar">
 
-    <!-- The three-line hamburger button. Clicking it opens the side menu.
-         The event listener is attached in map.js, not inline, to keep the HTML clean. -->
     <div class="navbar-left">
+      <!-- Three-line hamburger. map.js toggleMenu() opens the side panel. -->
       <button class="hamburger-btn" id="hamburgerBtn">
-        <!-- Three spans render as the three horizontal lines of the hamburger icon. -->
         <span class="hamburger-line"></span>
         <span class="hamburger-line"></span>
         <span class="hamburger-line"></span>
       </button>
     </div>
 
-    <!-- The GameScape logo. Split into two spans so each word can have
-         a slightly different gradient color via .logo-accent. -->
-    <div class="navbar-logo">
-      Game<span class="logo-accent">Scape</span>
-    </div>
+    <!-- Logo split so "Game" and "Scape" can have different gradient tones -->
+    <div class="navbar-logo">Game<span class="logo-accent">Scape</span></div>
 
-    <!-- The profile avatar in the top-right corner. src is a DiceBear-generated
-         placeholder; map.js replaces it with the logged-in user's avatar on login.
-         Clicking it opens the profile modal if logged in, or the login modal if not. -->
     <div class="navbar-right">
+      <!-- DiceBear avatar; map.js replaces the seed with the logged-in username -->
       <div class="profile-pic" id="profilePic">
         <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=GameScape" alt="Profile" class="avatar-img">
       </div>
     </div>
   </nav>
 
-  <!-- ============================================================
+  <!-- 
        HAMBURGER MENU
-       A floating glass panel that appears in the center of the screen
-       when the hamburger button is clicked. It sits outside <main> so
-       it can overlay everything including the map.
-
-       .menu-overlay: the dark blurred backdrop behind the panel.
-       .side-menu-left: the actual panel with navigation items.
-       Both start hidden; map.js toggles the .open / .show classes.
-       ============================================================ -->
+       Glass panel that slides in from the left.
+       map.js toggles .open / .show based on hamburger/close/overlay clicks.
+   -->
   <div class="menu-overlay" id="menuOverlay"></div>
   <div class="side-menu side-menu-left" id="sideMenu">
     <div class="menu-header">
       <h3>Menu</h3>
-      <!-- Closes the menu. Event is attached in map.js. -->
       <button class="menu-close" id="menuCloseBtn">✕</button>
     </div>
-
-    <!-- Each li has a data-page attribute. map.js reads this to decide
-         what to do when the item is clicked (navigate, open modal, etc.). -->
+    <!-- data-page → handleMenuClick() in map.js routes each item -->
     <ul class="menu-items">
-      <li data-page="home">
-        <span class="menu-icon"></span>
-        <span>Home</span>
-      </li>
-      <li data-page="chat">
-        <span class="menu-icon"></span>
-        <span>Chat</span>
-      </li>
-      <li data-page="notifications">
-        <span class="menu-icon"></span>
-        <span>Notifications</span>
-      </li>
-      <li data-page="settings">
-        <span class="menu-icon"></span>
-        <span>Settings</span>
-      </li>
-      <!-- The login/logout item. map.js changes the text between "Login" and
-           "Logout" by updating #loginLogoutText based on session state. -->
+      <li data-page="home">        <span class="menu-icon"></span><span>Home</span></li>
+      <li data-page="chat">        <span class="menu-icon"></span><span>Chat</span></li>
+      <li data-page="notifications"><span class="menu-icon"></span><span>Notifications</span></li>
+      <li data-page="settings">    <span class="menu-icon"></span><span>Settings</span></li>
+      <!-- Text toggles between "Login" and "Logout" based on session state -->
       <li data-page="login" id="loginMenuItem">
         <span class="menu-icon"></span>
         <span id="loginLogoutText">Login</span>
@@ -104,36 +71,26 @@
     </ul>
   </div>
 
-  <!-- ============================================================
-       MAIN LAYOUT
-       A horizontal flex row (defined in layout.css) that fills
-       all vertical space below the navbar.
-       Left side: the map area with floating UI elements.
-       Right side: the sidebar panel for player details.
-       ============================================================ -->
+  <!-- MAIN LAYOUT horizontal flex row filling below the navbar-->
   <main class="main-layout">
 
-    <!-- The map takes up all available horizontal space.
-         position: relative on .map-area lets the filter button and
-         player count badge be positioned absolutely over the map. -->
     <section class="map-area">
 
-      <!-- MapLibre renders its canvas into this div. The inline width/height
-           is required because MapLibre needs explicit dimensions to initialize. -->
-      <div id="map" style="width: 100%; height: 100%;"></div>
+      <!-- MapLibre renders its canvas here -->
+      <div id="map" style="width:100%;height:100%;"></div>
 
-      <!-- The floating "▼ Filters" button and its dropdown panel.
-           Positioned in the top-right corner of the map area.
-           map.js toggles the .show class on #filterDropdown when the button is clicked. -->
+      <!--  FILTER DROPDOWN 
+           Native <select> elements replaced with custom glassy
+           dropdowns (.custom-select). map.js initCustomSelects() wires
+           open/close and reads values via dataset.value (not .value).
+           map.js updateLocationCounts() fills the cnt-* badge spans.
+       -->
       <div class="filter-float" id="filterFloat">
         <button class="filter-float-btn" id="filterToggleBtn">▼ Filters</button>
-        
-    
 
-        <!-- The dropdown panel. Hidden by default; map.js shows it on button click. -->
         <div class="filter-dropdown-float" id="filterDropdown">
 
-          <!-- Age filter — custom glassy dropdown -->
+          <!-- Age filter -->
           <div class="filter-group">
             <label>Age</label>
             <div class="custom-select" id="filterAge" data-value="all">
@@ -151,7 +108,7 @@
             </div>
           </div>
 
-          <!-- Game filter — custom glassy dropdown -->
+          <!-- Game filter -->
           <div class="filter-group">
             <label>Games</label>
             <div class="custom-select" id="filterGames" data-value="all">
@@ -161,16 +118,17 @@
               </div>
               <div class="custom-select-options">
                 <div class="custom-select-option selected" data-value="all">All games</div>
-                <div class="custom-select-option" data-value="valorant">Valorant</div>
-                <div class="custom-select-option" data-value="cs2">CS2</div>
-                <div class="custom-select-option" data-value="lol">League of Legends</div>
-                <div class="custom-select-option" data-value="minecraft">Minecraft</div>
-                <div class="custom-select-option" data-value="fortnite">Fortnite</div>
+                <div class="custom-select-option" data-value="Valorant">Valorant</div>
+                <div class="custom-select-option" data-value="CS2">CS2</div>
+                <div class="custom-select-option" data-value="League of Legends">League of Legends</div>
+                <div class="custom-select-option" data-value="Minecraft">Minecraft</div>
+                <div class="custom-select-option" data-value="Fortnite">Fortnite</div>
+                <div class="custom-select-option" data-value="Apex Legends">Apex Legends</div>
               </div>
             </div>
           </div>
 
-          <!-- Location filter — custom glassy dropdown with player counts -->
+          <!-- Location filter with player-count badges -->
           <div class="filter-group">
             <label>Location</label>
             <div class="custom-select" id="filterLocation" data-value="all">
@@ -180,94 +138,85 @@
               </div>
               <div class="custom-select-options">
                 <div class="custom-select-option selected" data-value="all">
-                  <span>All locations</span><span class="custom-select-count" id="cnt-all"></span>
+                  <span>All locations</span>
+                  <!-- count badges filled by map.js updateLocationCounts() -->
+                  <span class="custom-select-count" id="cnt-all"></span>
                 </div>
                 <div class="custom-select-option" data-value="malmo">
-                  <span>Malmö</span><span class="custom-select-count" id="cnt-malmo"></span>
+                  <span>Malmö</span>
+                  <span class="custom-select-count" id="cnt-malmo"></span>
                 </div>
                 <div class="custom-select-option" data-value="goteborg">
-                  <span>Gothenburg</span><span class="custom-select-count" id="cnt-goteborg"></span>
+                  <span>Gothenburg</span>
+                  <span class="custom-select-count" id="cnt-goteborg"></span>
                 </div>
                 <div class="custom-select-option" data-value="stockholm">
-                  <span>Stockholm</span><span class="custom-select-count" id="cnt-stockholm"></span>
+                  <span>Stockholm</span>
+                  <span class="custom-select-count" id="cnt-stockholm"></span>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- Triggers applyFilters() in map.js which reads the select values
-               and re-renders the map with the filtered player set. -->
+          <!-- Calls map.js applyFilters() which reads custom-select data-value attributes -->
           <button class="filter-apply" id="applyFilters">Apply Filters</button>
         </div>
       </div>
 
-              <!--admin knapparna-->
-<!-- admin panel separat -->
-        <div id="adminPanel" style="display:none; position:absolute; top:80px; left:20px; z-index:600;">
-          <button onclick="addGame()">Add Game</button>
-          <div id="addGameForm" style="margin-top:15px;">
-              <h4>Add Game</h4>
+      <!--  ADMIN PANEL 
+           map.js checkAdmin() shows this panel only for is_admin users.
+           map.js addGame() / loadAdminEvents() / adminDeleteEvent() manage it.
+           Positioned absolute over the map in the top-left corner.
+       -->
+      <div id="adminPanel" style="display:none; position:absolute; top:80px; left:20px; z-index:600;">
 
-              <input 
-                type="text" 
-                id="gameNameInput" 
-                placeholder="Game name"
-                style="display:block; margin-bottom:8px;"
-              >
-
-              <input 
-                type="text" 
-                id="gameImageInput" 
-                placeholder="Image path (e.g. cs.png)"
-                style="display:block; margin-bottom:8px;"
-              >
-
-              <button id="submitGameBtn">Add Game</button>
-
-              <p id="gameMsg" style="margin-top:10px;"></p>
-            </div>
-          <div id="eventList"></div>
+        <!-- Add a new game to the global games table -->
+        <div id="addGameForm">
+          <input
+            type="text"
+            id="gameNameInput"
+            placeholder="Game name"
+            style="display:block; margin-bottom:8px; width:100%;"
+          >
+          <input
+            type="text"
+            id="gameImageInput"
+            placeholder="Image file (e.g. cs.png)"
+            style="display:block; margin-bottom:8px; width:100%;"
+          >
+          <button id="submitGameBtn" onclick="addGame()">Add Game</button>
+          <!-- Confirmation / error text from map.js addGame() -->
+          <p id="gameMsg" style="margin-top:8px; font-size:11px; color:#39d98a;"></p>
         </div>
 
-      <!-- The bottom-left badge showing total player count and active count.
-           #countText is updated by map.js's updatePlayerCount() function.
-           The animated .count-dot is purely decorative. -->
+        <!-- Event list populated by map.js loadAdminEvents() -->
+        <div id="eventList"></div>
+      </div>
+
+      <!-- Player count badge (bottom-left) map.js updatePlayerCount() updates this -->
       <div class="player-count" id="playerCount">
         <span class="count-dot"></span>
         <span id="countText">Loading players...</span>
       </div>
+
     </section>
 
-    <!-- The right sidebar panel. Slides in from the right when a player
-         marker is clicked on the map. Starts off-screen (translateX(100%))
-         and map.js adds .open to bring it into view.
-
-         Three states:
-         1. #sidebarEmpty — shown when no player is selected (the default state).
-         2. #profileCard  — filled with player details when a marker is clicked.
-         3. #chatPanel    — reserved for an inline chat feature (not yet implemented). -->
+    <!-- Sidebar slides in when a player is clicked; currently hidden -->
     <aside class="sidebar" id="sidebar">
-      <!-- Default empty state with a map emoji and instructional text. -->
       <div class="sidebar-empty" id="sidebarEmpty">
         <div class="sidebar-empty-icon">🗺</div>
         <strong>Click on a player on the map</strong>
-        <span>to see profile and start chat</span>
+        <span>to see their profile and start a chat</span>
       </div>
-
-      <!-- Filled by map.js with player profile HTML when a marker is clicked.
-           Hidden until a player is selected. -->
-      <div class="profile-card" id="profileCard" style="display: none;"></div>
-
-      <!-- Reserved for an inline mini-chat. Currently unused. -->
-      <div class="chat-panel" id="chatPanel" style="display: none;"></div>
+      <div class="profile-card" id="profileCard" style="display:none;"></div>
+      <div class="chat-panel"   id="chatPanel"   style="display:none;"></div>
     </aside>
   </main>
 
-  <!-- map.js is loaded at the bottom so it runs after all HTML elements exist.
-       It handles: map initialization, player markers, modal open/close,
-       hamburger menu, filter logic, session check, and login state. -->
-  <script src="map.js"></script>
-  <script src="admin.js"></script>
+  <!-- Single JS file: map.js handles map init, avatar markers, events, filters,
+       admin panel, custom selects, session check, and modal routing.
+       admin.js is no longer separate its logic is merged into map.js. -->
+  <script src="/static/js/map.js"></script>
 
 </body>
 </html>

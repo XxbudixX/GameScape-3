@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GameScape Find Gamers Near You</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <!-- Three.js only needed on the landing page -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+</head>
+<body class="landing-page">
+
+  <!-- HERO -->
+  <section id="hero-trigger">
+    <div id="hero-sticky">
+      <canvas id="globe-canvas"></canvas>
+      <div class="hero-text" id="heroText">
+        <p class="eyebrow">Welcome to</p>
+        <h1>GAME<span class="accent">SCAPE</span></h1>
+        <p class="tagline">Find gamers near you on an interactive map</p>
+      </div>
+      <div id="scroll-hint"><div class="needle"></div>SCROLL</div>
+      <a href="/map" id="enter-btn">ENTER THE MAP →</a>
+    </div>
+  </section>
+
+  <!-- FEATURES -->
+  <section id="features">
+    <p class="section-tag">What you get</p>
+    <h2>YOUR GAMING WORLD.<br>MAPPED.</h2>
+    <div class="cards">
+      <div class="card" data-reveal>
+        <span class="card-icon">🗺️</span>
+        <h3>Live Map</h3>
+        <p>See every gamer around you in real time. Green = online, orange = recently active, grey = offline.</p>
+      </div>
+      <div class="card" data-reveal>
+        <span class="card-icon">💬</span>
+        <h3>Direct Chat</h3>
+        <p>Click any player on the map and start chatting instantly. Messages sync live via WebSocket.</p>
+      </div>
+      <div class="card" data-reveal>
+        <span class="card-icon">🎮</span>
+        <h3>Gaming Events</h3>
+        <p>Pin a session on the map. Set the game, time, and max players. Anyone nearby can join in one click.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- MARQUEE -->
+  <div id="marquee-strip">
+    <div class="marquee-track">
+      <span>VALORANT</span><span class="dot">◆</span>
+      <span>CS2</span><span class="dot">◆</span>
+      <span>LEAGUE OF LEGENDS</span><span class="dot">◆</span>
+      <span>MINECRAFT</span><span class="dot">◆</span>
+      <span>FORTNITE</span><span class="dot">◆</span>
+      <span>APEX LEGENDS</span><span class="dot">◆</span>
+      <span>ROCKET LEAGUE</span><span class="dot">◆</span>
+      <span>OVERWATCH 2</span><span class="dot">◆</span>
+      <span>VALORANT</span><span class="dot">◆</span>
+      <span>CS2</span><span class="dot">◆</span>
+      <span>LEAGUE OF LEGENDS</span><span class="dot">◆</span>
+      <span>MINECRAFT</span><span class="dot">◆</span>
+      <span>FORTNITE</span><span class="dot">◆</span>
+      <span>APEX LEGENDS</span><span class="dot">◆</span>
+      <span>ROCKET LEAGUE</span><span class="dot">◆</span>
+      <span>OVERWATCH 2</span><span class="dot">◆</span>
+    </div>
+  </div>
+
+  <!-- HOW IT WORKS -->
+  <section id="how">
+    <p class="section-tag">How it works</p>
+    <h2>THREE STEPS TO<br>YOUR NEXT GAME</h2>
+    <div class="steps">
+      <div class="steps-line"></div>
+      <div class="step" data-reveal>
+        <div class="step-num">01</div>
+        <h3>Create Your Profile</h3>
+        <p>Sign up in seconds. Add the games you play, your rank, and links to your Discord or Steam.</p>
+      </div>
+      <div class="step" data-reveal>
+        <div class="step-num">02</div>
+        <h3>Appear on the Map</h3>
+        <p>Allow location access and your marker goes live. Other players can find you instantly.</p>
+      </div>
+      <div class="step" data-reveal>
+        <div class="step-num">03</div>
+        <h3>Connect &amp; Play</h3>
+        <p>Click a marker, see their profile, start a chat. Or create an event and let the squad come to you.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- STATS BAR -->
+  <div id="stats-bar">
+    <div class="stat"><span class="stat-num" id="stat-online">0</span><span class="stat-label">Players Online</span></div>
+    <div class="stat-divider"></div>
+    <div class="stat"><span class="stat-num" id="stat-registered">0</span><span class="stat-label">Registered Users</span></div>
+    <div class="stat-divider"></div>
+    <div class="stat"><span class="stat-num" id="stat-events">0</span><span class="stat-label">Active Events</span></div>
+    <div class="stat-divider"></div>
+    <div class="stat"><span class="stat-num" id="stat-cities">0</span><span class="stat-label">Cities Reached</span></div>
+  </div>
+
+  <!-- CTA -->
+  <section id="cta">
+    <h2>READY TO<br>FIND YOUR SQUAD?</h2>
+    <p>Join the map. Find players. Play together.</p>
+    <a href="/map" class="cta-btn">ENTER GAMESCAPE →</a>
+  </section>
+
+  <footer>
+    <span class="foot-logo">GameScape</span>
+    <span>© 2026 Grupp 5</span>
+    <a href="/map">Launch App →</a>
+  </footer>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

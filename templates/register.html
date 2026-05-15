@@ -2,125 +2,77 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <!-- Prevents mobile browsers from zooming out to show the full desktop layout. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-
-  <!-- Orbitron for the "Create Account" heading, Quicksand for everything else.
-       Loaded from Google Fonts because neither is a system font. -->
-  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-  <link href="https://fonts.googleapis.com/css2?family=Quicksand:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="./register.css">
   <title>GameScape - Register</title>
+  <link rel="stylesheet" href="/static/css/main.css">
 </head>
-<body>
-  <!-- The glass registration card. This page runs inside an iframe so the
-       card floats over the blurred map behind the iframe. -->
-  <div class="register-container">
+<body class="modal-page">
 
-    <!-- Closes the modal. window.parent is needed because this page is inside
-         an iframe and closeModalPage() lives in the parent window (map.js). -->
+  <div class="register-container">
     <button class="close-btn" onclick="window.parent.closeModalPage()">✕</button>
 
-    <!-- Heading split into two spans for the two-tone gradient effect. -->
     <div class="heading">
-      <span class="heading-main">Create</span>
-      <span class="heading-accent">Account</span>
+      <span class="heading-main">Create</span><span class="heading-accent"> Account</span>
     </div>
     <div class="subheading">Join GameScape today</div>
 
-    <!-- Error box. Hidden by default. register.js fills this with the server's
-         specific error message (e.g. "Username already taken") on failure. -->
     <div id="errorMsg" class="error-msg"></div>
 
-    <!-- The registration form. register.js intercepts submit, builds a JSON
-         payload, and sends it to /api/register. No real page navigation happens. -->
     <form class="form" id="registerForm">
 
-      <!-- Username field. The label above it is styled by .input-group label in CSS. -->
-      <div class="input-group full-width">
+      <div class="input-group">
         <label>Username</label>
-        <input class="input" type="text" name="username" id="username" placeholder="Username" required>
+        <input class="input" type="text" id="username" placeholder="Username" required>
       </div>
 
-      <!-- Password and Confirm Password sit side by side in one row (.password-row)
-           to save vertical space. The server validates they match — the HTML
-           doesn't do any client-side comparison. -->
       <div class="password-row">
         <div class="input-group">
           <label>Password</label>
-          <input class="input" type="password" name="password" id="password" placeholder="Password" required>
+          <input class="input" type="password" id="password" placeholder="Password" required>
         </div>
         <div class="input-group">
           <label>Confirm Password</label>
-          <input class="input" type="password" name="confirm_password" id="confirm_password" placeholder="Confirm password" required>
+          <input class="input" type="password" id="confirm_password" placeholder="Confirm password" required>
         </div>
       </div>
 
-      <!-- Full name. Not marked required in HTML but app.py rejects the form
-           server-side if it's empty. -->
-      <div class="input-group full-width">
-        <label>Full name</label>
-        <input class="input" type="text" name="full_name" id="full_name" placeholder="Full name">
+      <div class="input-group">
+        <label>Full Name</label>
+        <input class="input" type="text" id="full_name" placeholder="Full name">
       </div>
 
-      <!-- Email. type="email" gives free browser-level format validation. -->
-      <div class="input-group full-width">
+      <div class="input-group">
         <label>Email</label>
-        <input class="input" type="email" name="email" id="email" placeholder="email@example.com" required>
+        <input class="input" type="email" id="email" placeholder="email@example.com" required>
       </div>
 
-      <!-- Birthday uses the browser's native date picker.
-           app.py rejects registration if this is left empty. -->
-      <div class="input-group full-width">
+      <div class="input-group">
         <label>Birthday</label>
-        <input class="input" type="date" name="birthday" id="birthday">
+        <input class="input" type="date" id="birthday">
       </div>
 
-      <!-- Gender is a radio group so only one option can be selected at a time.
-           register.js finds the checked option with querySelector at submit time
-           because radio buttons don't work the same way as regular inputs. -->
       <div class="gender-group">
         <label class="gender-label">Gender</label>
         <div class="gender-options">
-          <!-- The <label> wraps the <input> so clicking the word "Male"
-               also selects the radio button — no separate for/id needed. -->
-          <label class="gender-option">
-            <input type="radio" value="male" name="gender"> Male
-          </label>
-          <label class="gender-option">
-            <input type="radio" value="female" name="gender"> Female
-          </label>
+          <label class="gender-option"><input type="radio" value="male"   name="gender"> Male</label>
+          <label class="gender-option"><input type="radio" value="female" name="gender"> Female</label>
         </div>
       </div>
 
-      <!-- Terms checkbox. required means the browser will block form submission
-           if it's unchecked. The label uses for="terms" to associate it with
-           the checkbox so clicking the label text also toggles the checkbox. -->
       <div class="terms-group">
         <input type="checkbox" id="terms" class="checkbox" required>
-        <label for="terms">
-          I accept the <a href="#">Terms and Conditions</a>
-        </label>
+        <label for="terms">I accept the <a href="#">Terms and Conditions</a></label>
       </div>
 
-      <!-- The submit button. register.js disables it and changes its text to
-           "Creating account..." while the request is in flight to prevent
-           double submissions. -->
       <button class="register-button" type="submit" id="registerBtn">Register</button>
     </form>
 
-    <!-- Swap the iframe to the login page without closing and reopening the modal.
-         openModalPage() is called on the parent window (map.js).
-         return false prevents the href="#" from scrolling the page. -->
     <div class="login-prompt">
       Already have an account?
-      <a href="#" onclick="window.parent.openModalPage('login/login.html'); return false;">Sign in</a>
+      <a href="#" onclick="window.parent.openModalPage('/login');return false;">Sign in</a>
     </div>
   </div>
 
-  <!-- register.js wires up the form submit handler, collects all field values,
-       sends the JSON payload to /api/register, and handles success/failure.
-       Loaded at the bottom so all form elements exist before the script runs. -->
-  <script src="./register.js"></script>
+  <script src="/static/js/app.js"></script>
 </body>
 </html>

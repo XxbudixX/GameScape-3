@@ -1,152 +1,215 @@
-# GameScape
+# GameScape 🎮
 
-GameScape is a web app that lets gamers find other players near them on an interactive map. You can see who is online, filter by game or age, click a player to view their profile, and send them a direct message.
+> Find gamers near you on an interactive map — connect, chat, and organise gaming sessions in real time.
 
 ---
 
-## What it does
+## What it is
 
-- Shows a live map with player markers color-coded by online status (active, recently active, offline)
-- Filter players by game, age range, or location
-- Click a marker to see a player's profile card (gamertag, rank, games, age)
-- Register and log in with a username/email and password
-- Edit your own profile (about me, games you play, interests)
-- Chat with other players — messages are saved to the database and load on your next visit
-- WebSocket support for real-time message delivery when both users are online
+GameScape is a full-stack web app where gamers can see each other on a live map, send direct messages, and pin gaming events so nearby players can join them. It's built with Flask on the backend and plain HTML/CSS/JS on the frontend — no React, no bundler, just files.
+
+---
+
+## Features
+
+- **Interactive map** — players show up as avatar markers with live status dots (active / recently active / offline)
+- **Real-time chat** — WebSocket-powered DMs with typing indicators and a contact list that updates as people come online
+- **Gaming events** — pin a session on the map with a custom time picker; other players see a pulsing ring and can click for details
+- **Steam integration** — search Steam's store and add games to your profile; icons and metadata are cached in the DB
+- **Player profiles** — about me, interests, Discord handle, Steam username, and a game showcase
+- **Map filters** — filter visible players by game, age range, and city
+- **Admin panel** — shown only to admin accounts; lets admins delete events and add games
+- **Visibility toggle** — users can hide themselves from the map without logging out
+
+---
+
+## Tech stack
+
+| Layer | What's used |
+|---|---|
+| Backend | Python 3, Flask, flask-sock (WebSockets) |
+| Database | PostgreSQL on Supabase |
+| DB driver | psycopg2 |
+| Auth | Werkzeug password hashing (pbkdf2:sha256) |
+| Map | MapLibre GL JS + MapTiler |
+| 3D landing | Three.js (procedural globe with fBm noise textures) |
+| Avatars | DiceBear Avataaars API |
+| Fonts | Orbitron, Quicksand (Google Fonts) |
 
 ---
 
 ## Project structure
 
 ```
-/
-├── app.py              Flask backend — all API routes
-├── databas.py          Database connection helper
+gamescape/
+├── main.py          # Flask app — all API routes and WebSocket handler
+├── databas.py       # DB connection helper (reads config.ini)
+├── config.ini       # ← NOT in git (see below)
 │
-├── index.html          Main page — map, navbar, hamburger menu, filter
-├── layout.css          Global styles (navbar, modal overlay, sidebar, filter)
-├── map.css             MapLibre popup and control styles
-├── map.js              Map rendering, player markers, modals, menu, filters
-├── sidebar.css         Hamburger menu panel styles
+├── templates/       # HTML pages served by Flask
+│   ├── landing.html
+│   ├── index.html   # Map page
+│   ├── chat.html
+│   ├── login.html
+│   ├── register.html
+│   └── profile.html
 │
-├── login/
-│   ├── login.html      Login modal page (runs inside an iframe)
-│   ├── login.css
-│   └── login.js        Submits login form, communicates result to parent window
-│
-├── register/
-│   ├── register.html   Registration modal page (runs inside an iframe)
-│   ├── register.css
-│   └── register.js     Submits register form, communicates result to parent window
-│
-├── profile/
-│   ├── profile.html    Profile modal page (runs inside an iframe)
-│   ├── profile.css
-│   └── profile.js      Loads and saves profile data, toggles edit mode
-│
-└── chat/
-    ├── chat.html       Full-screen chat page
-    ├── chat.css
-    └── chat.js         Contacts list, message history, WebSocket, DB save
+└── static/
+    ├── css/
+    │   └── main.css
+    └── js/
+        ├── app.js   # Login, register, profile, chat, landing globe logic
+        └── map.js   # Map markers, events, filters, admin panel
 ```
 
 ---
 
-## Tech stack
+## Getting started
 
-| Layer | Technology |
-|---|---|
-| Backend | Python, Flask |
-| Database | PostgreSQL on Supabase |
-| Map | MapLibre GL JS with a MapTiler style |
-| Avatars | DiceBear API (generated from username) |
-| Real-time chat | WebSocket (planned — routes not yet in app.py) |
-| Password hashing | Werkzeug pbkdf2:sha256 |
-| Fonts | Orbitron (headings), Quicksand (body) |
-
----
-
-## Setup
-
-**1. Install dependencies**
+### 1. Clone the repo
 
 ```bash
-pip install flask psycopg2-binary werkzeug
+git clone https://github.com/your-username/gamescape.git
+cd gamescape
 ```
 
+### 2. Install dependencies
 
-**2. Create the database tables**
+```bash
+pip install flask flask-sock psycopg2-binary werkzeug
+```
 
-You need at minimum these two tables:
+### 3. Create `config.ini`
+
+This file is gitignored because it contains your database credentials. Create it manually in the project root:
+
+```ini
+[database]
+host     = your-db-host
+user     = your-db-user
+port     = 5432
+password = your-password
+database = your-db-name
+```
+
+> If you're using Supabase, grab the connection string from your project's **Settings → Database** page. Use the **connection pooler** host and port 6543 for best results.
+
+### 4. Set up the database
+
+The app expects these tables in the `public` schema:
 
 ```sql
+-- Users
 CREATE TABLE users (
-    user_id   SERIAL PRIMARY KEY,
-    username  TEXT UNIQUE NOT NULL,
-    email     TEXT UNIQUE NOT NULL,
-    password  TEXT NOT NULL,
-    full_name TEXT,
-    birthday  DATE,
-    gender    TEXT,
-    status    TEXT DEFAULT 'offline',
-    latitude  NUMERIC,
-    longitude NUMERIC,
-    last_active TIMESTAMP
+    user_id       SERIAL PRIMARY KEY,
+    username      TEXT UNIQUE NOT NULL,
+    email         TEXT UNIQUE NOT NULL,
+    password      TEXT NOT NULL,
+    full_name     TEXT,
+    birthday      DATE,
+    gender        TEXT,
+    status        TEXT DEFAULT 'offline',
+    latitude      FLOAT,
+    longitude     FLOAT,
+    last_active   TIMESTAMP,
+    is_admin      BOOLEAN DEFAULT FALSE,
+    is_banned     BOOLEAN DEFAULT FALSE,
+    about_me      TEXT,
+    interests     TEXT,
+    discord       TEXT,
+    steam_username TEXT
 );
 
+-- Messages
 CREATE TABLE messages (
-    message_id  SERIAL PRIMARY KEY,
+    id          SERIAL PRIMARY KEY,
     sender_id   INT REFERENCES users(user_id),
     receiver_id INT REFERENCES users(user_id),
     message     TEXT NOT NULL,
     sent_at     TIMESTAMP DEFAULT NOW()
 );
+
+-- Steam games cache
+CREATE TABLE steam_games (
+    appid      INT PRIMARY KEY,
+    name       TEXT,
+    icon_url   TEXT,
+    header_url TEXT
+);
+
+-- User ↔ game link table
+CREATE TABLE user_steam_games (
+    user_id  INT REFERENCES users(user_id),
+    appid    INT REFERENCES steam_games(appid),
+    added_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (user_id, appid)
+);
+
+-- Events
+CREATE TABLE events (
+    id    SERIAL PRIMARY KEY,
+    title TEXT
+);
+
+-- Games (admin-managed list)
+CREATE TABLE games (
+    id         SERIAL PRIMARY KEY,
+    name       TEXT,
+    image_name TEXT
+);
 ```
 
-**3. Run the app**
+### 5. Run the app
 
 ```bash
-python app.py
+python main.py
 ```
 
 Then open `http://localhost:5000` in your browser.
 
 ---
 
-## What's not done yet
+## Environment notes
 
-**Profile saving** — The `/api/profile` GET and POST routes exist in `app.py` but are commented out. They need the `about_me`, `games`, and `interests` columns added to the `users` table before they can be uncommented:
+- **`config.ini` is gitignored** — never commit it. Each environment (local, staging, prod) keeps its own copy.
+- The app uses Flask's built-in session (cookie-based). Change `app.secret_key` in `main.py` to something long and random before deploying.
+- WebSockets use `ws://` on HTTP and `wss://` on HTTPS automatically — no config needed.
+- The map markers and player data on the map page are currently demo data hardcoded in `map.js`. Real player locations come from the `/api/players` endpoint once users set their coordinates.
 
-```sql
-ALTER TABLE users ADD COLUMN about_me TEXT;
-ALTER TABLE users ADD COLUMN games TEXT;
-ALTER TABLE users ADD COLUMN interests TEXT;
+---
+
+## API overview
+
+| Method | Route | Description |
+|---|---|---|
+| GET | `/api/me` | Current session info |
+| POST | `/api/login` | Log in |
+| POST | `/api/register` | Register |
+| POST | `/api/logout` | Log out |
+| GET | `/api/players` | All visible players with their games |
+| GET/POST | `/api/profile` | Get / save profile fields |
+| GET | `/api/steam/search?q=` | Search Steam store |
+| POST | `/api/steam/game/<appid>` | Add a game to profile |
+| DELETE | `/api/user/games/<appid>` | Remove a game from profile |
+| GET | `/api/user/games` | Current user's saved games |
+| GET | `/api/chat/contacts` | Conversations list |
+| GET | `/api/chat/history/<username>` | Message history with a user |
+| POST | `/api/chat/send` | Send a message |
+| GET | `/api/users/search?q=` | Search users by username |
+| GET | `/api/events` | List all events (admin) |
+| DELETE | `/api/admin/delete_event/<id>` | Delete an event (admin only) |
+| POST | `/api/admin/ban_user/<id>` | Ban a user (admin only) |
+| WS | `/ws/<username>` | WebSocket connection for real-time chat |
+
+---
+
+## .gitignore
+
+Make sure your `.gitignore` includes at least:
+
 ```
-
-**WebSocket server** — `chat.js` tries to connect to `/ws/<username>` for real-time messaging. That WebSocket route doesn't exist in `app.py` yet. Messages still save and load from the database, but the real-time delivery won't work until a WebSocket handler is added (e.g. using `flask-sock` or `gevent-websocket`).
-
-**Map players from database** — The map currently uses hardcoded player data from the `PLAYERS` array in `map.js`. The `/api/players` route exists and returns real players from the database, but `map.js` doesn't call it yet. Swap out the hardcoded array for a fetch call to wire this up.
-
-**Chat button on player cards** — The "Start Chat" button on the player profile modal shows an alert placeholder. It should navigate to `chat/chat.html` and open a conversation with that player.
-
-**Notifications and Settings** — Both menu items are placeholders that show an alert.
-
----
-
-## Login and session notes
-
-- Sessions are stored server-side using Flask's built-in session (cookie-based).
-- The `secret_key` in `app.py` should be changed to something random before deploying. The current value `"hemlig_nyckel"` is not secure.
-- Login accepts either username or email so users don't need to remember which one they registered with.
-- After registering, the user is automatically logged in — no second login step needed.
-- The login and register pages run inside iframes so they can have their own CSS without affecting the main page. They communicate back to the parent via `window.parent.setLoggedIn()` and `window.parent.closeModalPage()`.
-
----
-
-## Password requirements
-
-- 10 to 20 characters
-- At least one uppercase letter
-- At least one digit
-
-These are enforced on the server side in `app.py` so they can't be bypassed by disabling JavaScript.
+config.ini
+__pycache__/
+*.pyc
+.env
+```
