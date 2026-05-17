@@ -25,6 +25,13 @@
       <div class="back-button" onclick="window.location.href='/map'">
         <span>←</span> Back to Map
       </div>
+      <div class="global-search-wrap">
+        <svg class="global-search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+        </svg>
+        <input type="text" id="globalUserSearch" placeholder="Search all players…" autocomplete="off">
+        <div id="globalUserResults" class="global-user-results" style="display:none;"></div>
+      </div>
       <!-- Connection status is set dynamically by app.js initChat() -->
       <span id="connectionStatus" class="status-offline">Offline</span>
     </div>

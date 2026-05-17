@@ -299,18 +299,20 @@ function openPlayerModal(player) {
     box.innerHTML = `
         <div class="player-modal">
             <button class="close-btn-modal" onclick="window.closePlayerModal()">✕</button>
-            <div class="player-modal-header">
-                <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}"
-                     class="player-avatar-img" alt="${player.gamertag}">
-                <div class="player-info">
-                    <div class="player-name">${player.gamertag}</div>
-                    <div class="player-status" style="color:${statusColor}">● ${statusText}</div>
+            <div class="player-modal-scroll">
+                <div class="player-modal-header">
+                    <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}"
+                         class="player-avatar-img" alt="${player.gamertag}">
+                    <div class="player-info">
+                        <div class="player-name">${player.gamertag}</div>
+                        <div class="player-status" style="color:${statusColor}">● ${statusText}</div>
+                    </div>
                 </div>
+                <div class="player-section"><div class="section-label">Games</div><div class="player-games">${gameTags}</div></div>
+                <div class="player-section"><div class="section-label">Rank</div><div>${player.rank}</div></div>
+                <div class="player-section"><div class="section-label">Age</div><div>${player.age}</div></div>
+                <button class="modal-chat-btn" onclick="window.location.href='/chat?user=${player.gamertag}'">💬 Start Chat</button>
             </div>
-            <div class="player-section"><div class="section-label">Games</div><div class="player-games">${gameTags}</div></div>
-            <div class="player-section"><div class="section-label">Rank</div><div>${player.rank}</div></div>
-            <div class="player-section"><div class="section-label">Age</div><div>${player.age}</div></div>
-            <button class="modal-chat-btn" onclick="window.location.href='/chat'">💬 Start Chat</button>
         </div>`;
 
     // Inject styles once prevents duplicating the <style> tag on repeat opens
@@ -318,13 +320,12 @@ function openPlayerModal(player) {
         const s   = document.createElement('style');
         s.id      = 'player-modal-styles';
         s.textContent = `
-            .player-modal{width:100%;height:100%;background:rgba(14,15,18,0.95);backdrop-filter:blur(32px);border-radius:28px;padding:30px 25px 35px;color:#dbdee1;position:relative;box-sizing:border-box;border:1px solid rgba(155,89,182,0.3);}
-            // ::before is the actual gradient border; ::after is an inner fill that covers it,
-            // leaving only a thin rim visible. The neon-sweep keyframe slides the gradient's
-            // background-position so it appears to travel around the card border.
+            .player-modal{width:100%;height:100%;background:rgba(14,15,18,0.95);backdrop-filter:blur(32px);border-radius:28px;color:#dbdee1;position:relative;box-sizing:border-box;border:1px solid rgba(155,89,182,0.3);display:flex;flex-direction:column;overflow:hidden;}
             .player-modal::before{content:'';position:absolute;top:-2px;left:-2px;right:-2px;bottom:-2px;background:linear-gradient(90deg,transparent,#9b59b6,#c084fc,#e9d5ff,#c084fc,#9b59b6,transparent);border-radius:30px;z-index:-2;animation:neon-sweep 3s linear infinite;background-size:200% 100%;pointer-events:none;}
             .player-modal::after{content:'';position:absolute;top:2px;left:2px;right:2px;bottom:2px;background:rgba(14,15,18,0.95);backdrop-filter:blur(32px);border-radius:26px;z-index:-1;pointer-events:none;}
             @keyframes neon-sweep{0%{background-position:100% 0}100%{background-position:-100% 0}}
+            .player-modal-scroll{flex:1;overflow-y:auto;padding:30px 25px 35px;scrollbar-width:none;}
+            .player-modal-scroll::-webkit-scrollbar{display:none;}
             .close-btn-modal{position:absolute;top:15px;right:15px;background:rgba(30,31,34,0.6);border:1px solid rgba(155,89,182,0.4);color:#c084fc;font-size:16px;cursor:pointer;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:all 0.2s;z-index:10;}
             .close-btn-modal:hover{background:rgba(155,89,182,0.2);border-color:rgba(155,89,182,0.8);}
             .player-modal-header{display:flex;align-items:center;gap:15px;margin-bottom:25px;}

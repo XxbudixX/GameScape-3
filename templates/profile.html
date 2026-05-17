@@ -12,8 +12,7 @@
 
   <div class="profile-container">
     <button class="close-btn" onclick="window.parent.closeModalPage()">&#x2715;</button>
-
-    <!--  AVATAR + NAME + ICONS  -->
+  <div class="profile-scroll-inner">
     <div class="avatar-box">
       <div class="avatar-circle">
         <img id="profileAvatar"
@@ -50,7 +49,7 @@
 
     <!--  GAMES (Steam)  -->
     <div class="game-box">
-      <div id="gamesView" style="width:100%;display:flex;justify-content:space-around;flex-wrap:wrap;gap:8px;align-items:center;">
+      <div id="gamesView" style="width:100%;display:flex;justify-content:flex-start;flex-wrap:wrap;gap:12px;align-items:flex-start;">
         <span class="empty-hint">No games added yet</span>
       </div>
       <div id="gamesEdit" style="display:none;width:100%;padding:4px 0;">
@@ -128,6 +127,7 @@
 
     <!-- Sign Out at the very bottom -->
     <button class="logout-btn" id="logoutBtn" onclick="logoutUser()">Sign Out</button>
+  </div>
   </div>
 
 

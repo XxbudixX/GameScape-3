@@ -861,6 +861,8 @@ function initChat() {
     async function openChatWith(username) {
         currentChatPartner = username;
         chatNameSpan.textContent    = username;
+        chatNameSpan.style.cursor   = 'pointer';
+        chatNameSpan.title          = `View ${username}'s profile`;
         // Update avatar initial
         const avatarEl = document.getElementById('chatPartnerAvatar');
         if (avatarEl) avatarEl.textContent = username.charAt(0).toUpperCase();
@@ -1049,8 +1051,100 @@ function initChat() {
         });
     }
 
-    //  Boot 
-    checkLoginState().then(() => renderContacts());
+    // Click on chat partner name or avatar → show their profile card
+    function showPartnerProfile(username) {
+        const existing = document.getElementById('chatProfilePopup');
+        if (existing) existing.remove();
+        const isOnline = onlineUsers.has(username);
+        const overlay  = document.createElement('div');
+        overlay.id     = 'chatProfilePopup';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);backdrop-filter:blur(6px);';
+        overlay.innerHTML = `
+            <div style="background:rgba(14,15,18,0.97);border:1px solid rgba(155,89,182,0.4);border-radius:24px;padding:36px 28px 28px;width:300px;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.7);text-align:center;">
+                <button onclick="document.getElementById('chatProfilePopup').remove()"
+                    style="position:absolute;top:14px;right:14px;background:rgba(30,31,34,0.7);border:1px solid rgba(155,89,182,0.4);color:#c084fc;width:28px;height:28px;border-radius:50%;cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;">&#x2715;</button>
+                <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(username)}"
+                    style="width:80px;height:80px;border-radius:50%;border:2.5px solid #9b59b6;box-shadow:0 0 16px rgba(155,89,182,0.4);margin-bottom:14px;">
+                <div style="font-size:20px;font-weight:700;color:#e9d5ff;font-family:'Orbitron',sans-serif;margin-bottom:8px;">${escapeHtml(username)}</div>
+                <div style="font-size:13px;font-weight:600;color:${isOnline ? '#39d98a' : '#6c6f78'};margin-bottom:24px;">
+                    ${isOnline ? '&#128994; Online now' : '&#9899; Offline'}
+                </div>
+                <button onclick="window.location.href='/map'"
+                    style="width:100%;background:rgba(30,31,34,0.6);border:1px solid rgba(155,89,182,0.3);color:#c084fc;padding:11px;border-radius:40px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.2s;">
+                    View on Map
+                </button>
+            </div>`;
+        overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+        document.body.appendChild(overlay);
+    }
+
+    chatNameSpan.addEventListener('click', () => {
+        if (currentChatPartner) showPartnerProfile(currentChatPartner);
+    });
+
+    //  Boot
+    const globalSearchInput   = document.getElementById('globalUserSearch');
+    const globalSearchResults = document.getElementById('globalUserResults');
+    let   globalSearchDebounce = null;
+
+    if (globalSearchInput) {
+        globalSearchInput.addEventListener('input', () => {
+            const q = globalSearchInput.value.trim();
+            if (q.length < 1) {
+                if (globalSearchResults) { globalSearchResults.style.display = 'none'; globalSearchResults.innerHTML = ''; }
+                return;
+            }
+            clearTimeout(globalSearchDebounce);
+            globalSearchDebounce = setTimeout(async () => {
+                if (!isLoggedIn) return;
+                try {
+                    const res   = await fetch(`/api/users/search?q=${encodeURIComponent(q)}`, { credentials: 'same-origin' });
+                    const data  = await res.json();
+                    const users = (data.users || []).filter(u => u.username !== currentUsername);
+                    if (!users.length) {
+                        globalSearchResults.innerHTML     = '<div class="global-no-result">No users found</div>';
+                        globalSearchResults.style.display = 'block';
+                        return;
+                    }
+                    globalSearchResults.innerHTML = '';
+                    users.forEach(u => {
+                        const item     = document.createElement('div');
+                        item.className = 'global-result-item';
+                        item.innerHTML = `<div class="global-result-avatar">${u.username.charAt(0).toUpperCase()}</div>
+                            <div class="global-result-info">
+                                <span class="global-result-name">${escapeHtml(u.username)}</span>
+                                <span class="global-result-hint">Click to chat</span>
+                            </div>`;
+                        item.addEventListener('click', () => {
+                            globalSearchResults.style.display = 'none';
+                            globalSearchResults.innerHTML     = '';
+                            globalSearchInput.value           = '';
+                            openChatWith(u.username);
+                        });
+                        globalSearchResults.appendChild(item);
+                    });
+                    globalSearchResults.style.display = 'block';
+                } catch (_) {}
+            }, 300);
+        });
+        globalSearchInput.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                globalSearchInput.value           = '';
+                globalSearchResults.style.display = 'none';
+                globalSearchResults.innerHTML     = '';
+            }
+        });
+        document.addEventListener('click', e => {
+            if (!globalSearchInput.contains(e.target) && !globalSearchResults.contains(e.target))
+                globalSearchResults.style.display = 'none';
+        });
+    }
+
+    checkLoginState().then(() => {
+        renderContacts();
+        const target = new URLSearchParams(window.location.search).get('user');
+        if (target) openChatWith(decodeURIComponent(target));
+    });
 }
 
 
