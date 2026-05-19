@@ -57,7 +57,7 @@ function initLogin() {
                 // which exposes setLoggedIn and checkAdmin globally so the iframe can trigger
                 // state updates on the parent without a full page reload.
                 if (window.parent && window.parent.setLoggedIn)
-                    window.parent.setLoggedIn(true, data.username);
+                    window.parent.setLoggedIn(true, data.username, data.avatar_seed || data.username);
                 // tell the parent to refresh the admin panel after login
                 if (window.parent && window.parent.checkAdmin)
                     window.parent.checkAdmin();
@@ -117,7 +117,7 @@ function initRegister() {
 
             if (data.success) {
                 if (window.parent && window.parent.setLoggedIn)
-                    window.parent.setLoggedIn(true, data.username);
+                    window.parent.setLoggedIn(true, data.username, data.avatar_seed || data.username);
                 window.parent.closeModalPage();
             } else {
                 errorMsg.textContent   = data.error || 'Registration failed';
@@ -140,7 +140,8 @@ function initRegister() {
 // ══════════════════════════════════════════════════════════
 
 let editMode       = false;
-let profileData    = { about_me: '', interests: '', discord: '', steam_username: '' };
+let profileData    = { about_me: '', interests: '', discord: '', steam_username: '', avatar_seed: '' };
+let pendingAvatarSeed = '';
 let dbColumnsExist = false;
 let userGames      = [];
 
@@ -162,8 +163,9 @@ async function loadProfile() {
             return;
         }
         document.getElementById('profileName').textContent = data.username;
-        document.getElementById('profileAvatar').src =
-            `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(data.username)}`;
+        profileData.avatar_seed = data.avatar_seed || data.username;
+        pendingAvatarSeed = profileData.avatar_seed;
+        setProfileAvatar(profileData.avatar_seed);
 
         await loadUserGames();
 
@@ -177,13 +179,103 @@ async function loadProfile() {
                     interests:      profData.interests      || '',
                     discord:        profData.discord        || '',
                     steam_username: profData.steam_username || '',
+                    avatar_seed:    profData.avatar_seed    || data.username,
                 };
+                pendingAvatarSeed = profileData.avatar_seed;
+                setProfileAvatar(profileData.avatar_seed);
                 renderView();
             }
         } catch (_) {}
 
     } catch (e) {
         document.getElementById('profileName').textContent = 'Could not load profile';
+    }
+}
+
+const baseAvatarSeeds = ['GameScape','PixelMage','ShadowFox','NeonNinja','LootGoblin','CosmicCat','DragonRider','ArcadeHero','CyberWolf','MoonKnight','StarPanda','QuestCat'];
+let avatarSeeds = [...baseAvatarSeeds];
+function avatarUrl(seed) {
+    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
+}
+function setProfileAvatar(seed) {
+    const img = document.getElementById('profileAvatar');
+    if (img) img.src = avatarUrl(seed);
+}
+function renderAvatarPicker() {
+    const el = document.getElementById('avatarPicker');
+    if (!el) return;
+    const current = pendingAvatarSeed || profileData.avatar_seed;
+    const choices = avatarSeeds.map(seed => `
+        <button type="button" class="avatar-choice ${seed === current ? 'selected' : ''}" onclick="chooseAvatar('${seed}')">
+            <img src="${avatarUrl(seed)}" alt="${seed}">
+        </button>`).join('');
+    el.innerHTML = `
+        <div class="avatar-choice-grid">${choices}</div>
+        <div class="avatar-picker-actions">
+            <button type="button" class="avatar-random-btn" onclick="randomizeAvatarChoices()">Randomize</button>
+            <button type="button" class="avatar-apply-btn" onclick="applyAvatarChoice()" ${current === profileData.avatar_seed ? 'disabled' : ''}>Apply</button>
+        </div>`;
+}
+function toggleAvatarPicker() {
+    const el = document.getElementById('avatarPicker');
+    if (!el) return;
+    const opening = el.style.display !== 'flex';
+    if (opening) {
+        pendingAvatarSeed = profileData.avatar_seed;
+        avatarSeeds = profileData.avatar_seed ? [profileData.avatar_seed, ...baseAvatarSeeds.filter(seed => seed !== profileData.avatar_seed)].slice(0, 12) : [...baseAvatarSeeds];
+        renderAvatarPicker();
+    } else {
+        pendingAvatarSeed = '';
+        setProfileAvatar(profileData.avatar_seed);
+    }
+    el.style.display = opening ? 'flex' : 'none';
+}
+function chooseAvatar(seed) {
+    pendingAvatarSeed = seed;
+    setProfileAvatar(seed); // preview only; nothing is saved until Apply is clicked
+    renderAvatarPicker();
+}
+function randomAvatarSeed() {
+    return `avatar-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+function randomizeAvatarChoices() {
+    avatarSeeds = Array.from({ length: 12 }, randomAvatarSeed);
+    pendingAvatarSeed = avatarSeeds[0];
+    setProfileAvatar(pendingAvatarSeed); // preview only
+    renderAvatarPicker();
+}
+async function applyAvatarChoice() {
+    const seed = pendingAvatarSeed || profileData.avatar_seed;
+    if (seed === profileData.avatar_seed) return;
+    await saveAvatarSeed(seed);
+}
+async function saveAvatarSeed(seed) {
+    try {
+        const res = await fetch('/api/profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                about_me:       profileData.about_me       || '',
+                interests:      profileData.interests      || '',
+                discord:        profileData.discord        || '',
+                steam_username: profileData.steam_username || '',
+                avatar_seed:    seed,
+            }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Could not save avatar');
+        profileData.avatar_seed = data.avatar_seed || seed;
+        pendingAvatarSeed = profileData.avatar_seed;
+        setProfileAvatar(profileData.avatar_seed);
+        renderAvatarPicker();
+        const picker = document.getElementById('avatarPicker');
+        if (picker) picker.style.display = 'none';
+        if (window.parent && window.parent.setLoggedIn)
+            window.parent.setLoggedIn(true, document.getElementById('profileName')?.textContent, profileData.avatar_seed);
+    } catch (e) {
+        setProfileAvatar(profileData.avatar_seed);
+        showProfileError(e.message || 'Could not save avatar');
     }
 }
 
@@ -289,12 +381,15 @@ function toggleEdit() {
     const ge = document.getElementById('gamesEdit');
     if (gv) gv.style.display = editMode ? 'none' : '';
     if (ge) ge.style.display = editMode ? 'block' : 'none';
+    const ap = document.getElementById('avatarPicker');
+    if (ap && editMode) { renderAvatarPicker(); }
 
     if (editMode) {
         const aboutEdit = document.getElementById('aboutEdit');
         const intInput  = document.getElementById('interestsInput');
         if (aboutEdit) aboutEdit.value = profileData.about_me  || '';
         if (intInput)  intInput.value  = profileData.interests || '';
+        renderAvatarPicker();
         renderGamesEdit();
     }
 
@@ -311,14 +406,8 @@ async function saveProfile() {
         // discord and steam_username are saved via their own popup, not here
         discord:        profileData.discord        || '',
         steam_username: profileData.steam_username || '',
+        avatar_seed:    profileData.avatar_seed    || '',
     };
-    // Don't save if nothing changed
-    if (!payload.about_me && !payload.interests
-        && !profileData.about_me && !profileData.interests) {
-        toggleEdit();
-        return;
-    }
-
     const saveBtn = document.getElementById('saveBtn');
     const origText = saveBtn?.textContent;
     if (saveBtn) { saveBtn.textContent = 'Saving…'; saveBtn.disabled = true; }
@@ -336,6 +425,9 @@ async function saveProfile() {
             profileData.interests      = payload.interests;
             profileData.discord        = payload.discord;
             profileData.steam_username = payload.steam_username;
+            profileData.avatar_seed    = payload.avatar_seed;
+            if (window.parent && window.parent.setLoggedIn)
+                window.parent.setLoggedIn(true, document.getElementById('profileName')?.textContent, payload.avatar_seed);
             renderView();
             toggleEdit();
         } else {
@@ -446,6 +538,7 @@ async function saveContact() {
                 interests:      profileData.interests      || '',
                 discord:        profileData.discord        || '',
                 steam_username: profileData.steam_username || '',
+                avatar_seed:    profileData.avatar_seed    || '',
             }),
         });
         const data = await res.json();

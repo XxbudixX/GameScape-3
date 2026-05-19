@@ -68,25 +68,38 @@ map.addControl(new maplibregl.NavigationControl({
 // Global login state updated by setLoggedIn() and checkSession()
 let isLoggedIn      = false;
 let currentUsername = null;
+let currentAvatarSeed = null;
+
+function dicebearAvatar(seed) {
+    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
+}
+
+function refreshPlayerAvatar(player) {
+    const marker = playerMarkers[player.id];
+    const src = dicebearAvatar(player.avatarSeed || player.gamertag);
+    if (marker) marker.el.querySelector('img')?.setAttribute('src', src);
+}
 
 
 // Updates global login state and refreshes the avatar + menu button text.
 // Also updates the demo player's gamertag to match the logged-in user.
-function setLoggedIn(status, username) {
+function setLoggedIn(status, username, avatarSeed) {
     isLoggedIn      = status;
     currentUsername = username || null;
+    currentAvatarSeed = avatarSeed || username || null;
     updateLoginLogoutButton();
 
     const avatarImg = document.querySelector('.avatar-img');
     if (avatarImg && username) {
-        avatarImg.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(username)}`;
+        avatarImg.src = dicebearAvatar(currentAvatarSeed);
         avatarImg.alt = username;
     }
 
-    // Make the demo marker represent the real logged-in user's gamertag
+    // Make the demo marker represent the real logged-in user's gamertag/avatar.
     if (status && username) {
         const demo = PLAYERS.find(p => p.isDemo);
-        if (demo) { demo.gamertag = username; demo.avatarSeed = username; }
+        if (demo) { demo.gamertag = username; demo.avatarSeed = currentAvatarSeed; refreshPlayerAvatar(demo); }
+        renderMapMarkers(getVisiblePlayers());
     }
 }
 
@@ -95,7 +108,7 @@ async function checkSession() {
     try {
         const res  = await fetch('/api/me', { credentials: 'same-origin' });
         const data = await res.json();
-        if (data.logged_in) setLoggedIn(true, data.username);
+        if (data.logged_in) setLoggedIn(true, data.username, data.avatar_seed);
     } catch (e) { console.warn('Session check failed:', e); }
 }
 
@@ -193,7 +206,7 @@ function buildAvatarMarkerEl(player) {
     wrap.className = 'avatar-marker' + (player.isDemo ? ' demo-marker' : '');
 
     const img = document.createElement('img');
-    img.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}`;
+    img.src = dicebearAvatar(player.avatarSeed || player.gamertag);
     img.alt = player.gamertag;
     wrap.appendChild(img);
 
@@ -238,9 +251,15 @@ function renderMapMarkers(playerList) {
             delete playerMarkers[id];
         }
     });
-    // Add new ones
+    // Add new markers, and repaint existing marker avatars when their seed changes.
     playerList.forEach(player => {
-        if (playerMarkers[player.id]) return;
+        if (playerMarkers[player.id]) {
+            playerMarkers[player.id].marker.setLngLat([player.lng, player.lat]);
+            refreshPlayerAvatar(player);
+            const dot = playerMarkers[player.id].el.querySelector('.status-ring');
+            if (dot) dot.style.background = player.status === 'active' ? '#39d98a' : player.status === 'recent' ? '#f5a623' : '#6c6f78';
+            return;
+        }
         const el     = buildAvatarMarkerEl(player);
         const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
             .setLngLat([player.lng, player.lat])
@@ -392,7 +411,7 @@ function showMiniProfile(player) {
     const statusColor = { active: '#39d98a', recent: '#f5a623', offline: '#6c6f78' }[player.status] || '#6c6f78';
     const statusLabel = { active: 'Active now', recent: `Active ${player.lastActive}`, offline: 'Offline' }[player.status];
     const gamesStr    = (player.games || []).join(' · ');
-    const initials    = player.gamertag.slice(0, 2).toUpperCase();
+    const avatarSrc   = dicebearAvatar(player.avatarSeed || player.gamertag);
 
     activeMiniPopup = new maplibregl.Popup({
         closeButton: false, closeOnClick: true, offset: [0, -20], maxWidth: '300px'
@@ -401,7 +420,7 @@ function showMiniProfile(player) {
         .setHTML(`
             <div class="mini-profile-inner">
                 <div class="mini-profile-header">
-                    <div class="mini-profile-avatar">${initials}</div>
+                    <img src="${avatarSrc}" class="mini-profile-avatar" alt="${player.gamertag}">
                     <div>
                         <div class="mini-profile-name">${player.gamertag}</div>
                         <div class="mini-profile-status" style="color:${statusColor}">&#9679; ${statusLabel}</div>
@@ -433,7 +452,7 @@ function showMiniProfile(player) {
             .mini-profile-popup .maplibregl-popup-close-button{display:none!important;}
             .mini-profile-inner{display:flex;flex-direction:column;gap:12px;}
             .mini-profile-header{display:flex;align-items:center;gap:14px;}
-            .mini-profile-avatar{width:50px;height:50px;border-radius:8px;background:linear-gradient(135deg,#1e3a5f,#2563eb);border:1.5px solid rgba(96,165,250,0.4);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#e0f2fe;flex-shrink:0;}
+            .mini-profile-avatar{width:50px;height:50px;border-radius:50%;border:1.5px solid rgba(96,165,250,0.4);object-fit:cover;flex-shrink:0;background:#0f1923;}
             .mini-profile-name{font-size:17px;font-weight:800;color:#f0f9ff;font-family:'Orbitron',sans-serif;letter-spacing:0.5px;}
             .mini-profile-status{font-size:12px;margin-top:3px;font-weight:700;}
             .mini-profile-divider{height:1px;background:rgba(96,165,250,0.15);}
@@ -480,7 +499,7 @@ function showEventPopup(player, evt) {
 
     const timeStr     = fmtTime(evt.startHour, evt.startMin, evt.startAmPm);
     const endStr      = evt.hasEnd ? ` – ${fmtTime(evt.endHour, evt.endMin, evt.endAmPm)}` : ' · 2hr';
-    const avatarSrc   = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}`;
+    const avatarSrc   = dicebearAvatar(player.avatarSeed || player.gamertag);
     const statusColor = { active: '#39d98a', recent: '#f5a623', offline: '#6c6f78' }[player.status] || '#6c6f78';
 
     activeEventPopup = new maplibregl.Popup({

@@ -66,11 +66,29 @@ def static_files(filename):
 @app.route('/api/me', methods=['GET'])
 def me():
     if 'user_id' in session:
+        avatar_seed = session.get('avatar_seed') or session['username']
+        # Refresh avatar_seed from the database on every session check so a page
+        # reload never falls back to an older username-based DiceBear seed.
+        conn, cur = connect_db()
+        if conn is not None:
+            try:
+                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+                conn.commit()
+                cur.execute('SELECT avatar_seed FROM users WHERE user_id = %s', (session['user_id'],))
+                row = cur.fetchone()
+                if row and row[0]:
+                    avatar_seed = row[0]
+                    session['avatar_seed'] = avatar_seed
+            except Exception as e:
+                print(e)
+            finally:
+                cur.close(); conn.close()
         return jsonify({
-            'logged_in': True,
-            'user_id':   session['user_id'],
-            'username':  session['username'],
-            'role':      session.get('role', False)
+            'logged_in':   True,
+            'user_id':     session['user_id'],
+            'username':    session['username'],
+            'role':        session.get('role', False),
+            'avatar_seed': avatar_seed
         })
     return jsonify({'logged_in': False, 'role': False})
 
@@ -91,8 +109,10 @@ def login():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database connection error'}), 500
     try:
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+        conn.commit()
         cur.execute(
-            'SELECT user_id, username, password, is_admin FROM users WHERE username = %s OR email = %s',
+            'SELECT user_id, username, password, is_admin, avatar_seed FROM users WHERE username = %s OR email = %s',
             (username_or_email, username_or_email)
         )
         user = cur.fetchone()
@@ -107,7 +127,8 @@ def login():
         # explicitly to a Python bool so session.get('role') is always True or False,
         # never None, which avoids subtle bugs in the is_admin() check below.
         session['role']     = bool(user[3]) if user[3] is not None else False
-        return jsonify({'success': True, 'username': user[1]})
+        session['avatar_seed'] = user[4] or user[1]
+        return jsonify({'success': True, 'username': user[1], 'avatar_seed': session['avatar_seed']})
     except Exception as e:
         print(e)
         return jsonify({'success': False, 'error': 'Login error'}), 500
@@ -154,6 +175,8 @@ def register():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database connection error'}), 500
     try:
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+        conn.commit()
         cur.execute('SELECT user_id FROM users WHERE username = %s', (username,))
         if cur.fetchone():
             return jsonify({'success': False, 'error': 'Username already taken'}), 409
@@ -165,15 +188,16 @@ def register():
         # RETURNING user_id gives us the new row's PK in the same round-trip
         # instead of running a second SELECT to find it.
         cur.execute(
-            'INSERT INTO users (username, email, password, full_name, birthday, gender) VALUES (%s,%s,%s,%s,%s,%s) RETURNING user_id',
-            (username, email, hashed, full_name, birthday, gender)
+            'INSERT INTO users (username, email, password, full_name, birthday, gender, avatar_seed) VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING user_id',
+            (username, email, hashed, full_name, birthday, gender, username)
         )
         new_user_id = cur.fetchone()[0]
         conn.commit()
         session['user_id']  = new_user_id
         session['username'] = username
         session['role']     = False
-        return jsonify({'success': True, 'username': username})
+        session['avatar_seed'] = username
+        return jsonify({'success': True, 'username': username, 'avatar_seed': session['avatar_seed']})
     except Exception as e:
         print(e)
         conn.rollback()
@@ -196,8 +220,10 @@ def get_players():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+        conn.commit()
         cur.execute("""
-            SELECT user_id, username, status, latitude, longitude, last_active
+            SELECT user_id, username, status, latitude, longitude, last_active, avatar_seed
             FROM users
             WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND status != 'invisible'
         """)
@@ -220,6 +246,7 @@ def get_players():
                 'lat':        float(r[3]),
                 'lng':        float(r[4]),
                 'lastActive': str(r[5]) if r[5] else 'Unknown',
+                'avatarSeed': r[6] or r[1],
                 'games':      games,
             })
         return jsonify({'success': True, 'players': players})
@@ -244,10 +271,11 @@ def get_profile():
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS interests      TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord        TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_username TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
         conn.commit()
 
         cur.execute(
-            'SELECT username, about_me, interests, discord, steam_username FROM users WHERE user_id = %s',
+            'SELECT username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE user_id = %s',
             (session['user_id'],)
         )
         row = cur.fetchone()
@@ -258,6 +286,7 @@ def get_profile():
             'interests':      row[2] or '',
             'discord':        row[3] or '',
             'steam_username': row[4] or '',
+            'avatar_seed':    row[5] or row[0],
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -277,20 +306,24 @@ def save_profile():
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS interests      TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord        TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_username TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
         conn.commit()
 
+        avatar_seed = (data.get('avatar_seed') or session.get('avatar_seed') or session.get('username') or 'GameScape')[:80]
         cur.execute(
-            'UPDATE users SET about_me=%s, interests=%s, discord=%s, steam_username=%s WHERE user_id=%s',
+            'UPDATE users SET about_me=%s, interests=%s, discord=%s, steam_username=%s, avatar_seed=%s WHERE user_id=%s',
             (
                 data.get('about_me',       ''),
                 data.get('interests',      ''),
                 data.get('discord',        ''),
                 data.get('steam_username', ''),
+                avatar_seed,
                 session['user_id']
             )
         )
+        session['avatar_seed'] = avatar_seed
         conn.commit()
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'avatar_seed': avatar_seed})
     except Exception as e:
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
