@@ -995,15 +995,87 @@ function initEventSystem() {
         const demo       = PLAYERS.find(p => p.isDemo);
         const demoId     = demo ? demo.id : 99;
         activeEvents     = activeEvents.filter(e => e.playerId !== demoId);
-        activeEvents.push({ playerId: demoId, eventName: name, gameName: game,
-            startHour: startH, startMin: startM, startAmPm: startAp,
-            hasEnd, endHour: endH, endMin: endM, endAmPm: endAp });
+        
+        //activeEvents.push({ playerId: demoId, eventName: name, gameName: game,
+            //startHour: startH, startMin: startM, startAmPm: startAp,
+            //hasEnd, endHour: endH, endMin: endM, endAmPm: endAp });
 
-        overlay.classList.remove('show');
-        document.getElementById('evtName').value = '';
-        document.getElementById('evtGame').value = '';
-        refreshEventMarkers();
+        //overlay.classList.remove('show');
+        //document.getElementById('evtName').value = '';
+        //document.getElementById('evtGame').value = '';
+        //refreshEventMarkers();
+
+        const now = new Date();
+        let startHour24 = startH % 12;
+
+        if (startAp === 'PM') {
+            startHour24 += 12;
+        }
+        const startDate = new Date(
+            now.getFullYear(),
+            now.getMonth(),
+            now.getDate(),
+            startHour24,
+            startM
+        );
+        
+        fetch("/create_event",{
+            method:'POST',
+            headers:{
+                'Content-Type': 'application/json'
+            },
+            credentials: 'include',
+            body: JSON.stringify({
+                title: name,
+                game_name: game ,
+                datetime: startDate.toISOString(),
+                description: '',
+                min_rank: null,
+                max_rank: null
+            })
+        })
+.then(async res => {
+    const data = await res.json();
+
+    if (!res.ok) {
+        throw new Error(data.error || 'Server error');
+    }
+
+    return data;
+})
+
+.then(data => {
+            if (data.error) {
+                throw new Error(data.error);
+        }
+    const demo = PLAYERS.find(p => p.isDemo);
+    const demoId = demo ? demo.id : 99;
+
+    activeEvents = activeEvents.filter(e => e.playerId !== demoId);
+    
+    activeEvents.push({
+        playerId: demoId,
+        eventName: name,
+        gameName: game,
+        startHour: startH,
+        startMin: startM,
+        startAmPm: startAp,
+        hasEnd,
+        endHour: endH,
+        endMin: endM,
+        endAmPm: endAp
     });
+    overlay.classList.remove('show');
+    document.getElementById('evtName').value = '';
+    document.getElementById('evtGame').value = '';
+    refreshEventMarkers();
+})
+.catch(err => {
+    console.error(err);
+    errEl.textContent = 'Failed to create event';
+    errEl.style.display = 'block';
+});
+});
 
     // Draw initial pulse rings once the map markers are ready
     map.on('load', () => setTimeout(refreshEventMarkers, 500));

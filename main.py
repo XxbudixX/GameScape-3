@@ -297,7 +297,63 @@ def save_profile():
     finally:
         cur.close(); conn.close()
 
+@app.route('/create_event', methods=['POST'])
+def create_event():
+    if 'user_id' not in session:
+        return jsonify({'error': "Inte inloggad"}),401
+    try:
+        data = request.json
 
+        title = data.get('title')
+        #game_id = data.get('game_id')
+        datetime_value = data.get('datetime')
+        description = data.get('description')
+        min_rank = data.get('min_rank')
+        max_rank = data.get('max_rank')
+        game_name = data.get('game_name')
+
+        if not title or not game_name or not datetime_value:
+            return jsonify({"error": "Missing required fields"}), 400
+        
+        conn = connect_db()
+        cur = conn.cursor()
+            
+        cur.execute("""
+            SELECT game_id
+            FROM game
+            WHERE LOWER(name) = LOWER(%s)
+                    """, (game_name,))
+        game_row = cur.fetchone()
+        if not game_row:
+            return jsonify({"error": "Game not found"}), 404
+        
+        game_id = game_row[0]
+
+        cur.execute("""
+            INSERT INTO event 
+            (creator_id, game_id,
+            title, datetime,
+            description,
+            min_rank,
+            max_rank)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (
+        session["user_id"],
+        game_id,
+        title,
+        datetime_value,
+        description,
+        min_rank,
+        max_rank
+        ))
+        conn.commit()
+        cur.close()
+        conn.close()
+
+        return jsonify({"message": "Event skapat"})
+    except Exception as e:
+        return jsonify({"error":str(e)}) , 500
+    
 #  Admin 
 
 @app.route('/api/admin/delete_event/<int:event_id>', methods=['DELETE'])
