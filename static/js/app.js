@@ -240,6 +240,25 @@ async function removeGame(appid) {
         renderGamesView();
     } catch (_) {}
 }
+window.createEvent = async function(eventData) {
+
+    const res = await fetch("/create_event", {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json'
+        },
+        credentials: 'include',
+        body: JSON.stringify(eventData)
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+        throw new Error(data.error || 'Server error');
+    }
+
+    return data;
+}
 
 function renderView() {
     // About Me
