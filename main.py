@@ -5,6 +5,7 @@ import os
 import urllib.request
 import urllib.parse
 import json
+from datetime import date, datetime
 
 # Install with: pip install flask-sock
 # We import inside a try/except so the app still starts even if flask_sock
@@ -212,6 +213,18 @@ def logout():
     return jsonify({'success': True})
 
 
+def calculate_age(birthday):
+    if not birthday:
+        return None
+    if isinstance(birthday, str):
+        try:
+            birthday = datetime.fromisoformat(birthday).date()
+        except ValueError:
+            return None
+    today = date.today()
+    return today.year - birthday.year - ((today.month, today.day) < (birthday.month, birthday.day))
+
+
 #  Players 
 
 @app.route('/api/players', methods=['GET'])
@@ -220,18 +233,26 @@ def get_players():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
+        ensure_presence_columns(cur)
+        ensure_friend_requests_table(cur)
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+        if 'user_id' in session:
+            # Cheap heartbeat: every poll marks the current browser online.
+            # Do not write status='active': some existing DBs constrain status to offline/online-style values.
+            touch_current_user(cur)
         conn.commit()
+
         cur.execute("""
-            SELECT user_id, username, status, latitude, longitude, last_active, avatar_seed
+            SELECT user_id, username,
+                   CASE WHEN last_active > CURRENT_TIMESTAMP - INTERVAL '30 seconds' AND COALESCE(is_invisible,FALSE)=FALSE THEN 'active' ELSE 'offline' END AS live_status,
+                   latitude, longitude, last_active, avatar_seed, birthday, status, COALESCE(is_invisible,FALSE) AS is_invisible
             FROM users
-            WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND status != 'invisible'
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND COALESCE(is_invisible,FALSE)=FALSE
         """)
         rows = cur.fetchall()
         players = []
         for r in rows:
             uid = r[0]
-            # Fetch Steam games for each player
             cur.execute("""
                 SELECT sg.appid, sg.name, sg.icon_url
                 FROM steam_games sg
@@ -245,13 +266,80 @@ def get_players():
                 'status':     r[2] or 'offline',
                 'lat':        float(r[3]),
                 'lng':        float(r[4]),
-                'lastActive': str(r[5]) if r[5] else 'Unknown',
+                'lastActive': 'Just now' if r[2] == 'active' else (str(r[5]) if r[5] else 'Unknown'),
                 'avatarSeed': r[6] or r[1],
+                'age':        calculate_age(r[7]),
                 'games':      games,
+                'isSelf':     ('user_id' in session and uid == session['user_id']),
+                'friendship_status': friendship_status(cur, session['user_id'], uid) if 'user_id' in session and uid != session['user_id'] else 'self'
             })
         return jsonify({'success': True, 'players': players})
     except Exception as e:
         print(e)
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/presence', methods=['POST'])
+def update_presence():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    data = request.get_json() or {}
+    lat = data.get('lat')
+    lng = data.get('lng')
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_presence_columns(cur)
+        if lat is not None and lng is not None:
+            cur.execute("""
+                UPDATE users
+                SET latitude=%s, longitude=%s,
+                    status=CASE WHEN status IS NULL OR status IN ('active','invisible') THEN 'offline' ELSE status END,
+                    is_online=CASE WHEN COALESCE(is_invisible,FALSE) THEN FALSE ELSE TRUE END,
+                    last_active=CURRENT_TIMESTAMP
+                WHERE user_id=%s
+            """, (lat, lng, session['user_id']))
+        else:
+            touch_current_user(cur)
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/visibility', methods=['POST'])
+def set_visibility():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    data = request.get_json() or {}
+    visible = bool(data.get('visible', True))
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_presence_columns(cur)
+        cur.execute(
+            """
+            UPDATE users
+            SET status=CASE WHEN status IS NULL OR status IN ('active','invisible') THEN 'offline' ELSE status END,
+                is_invisible=%s,
+                is_online=%s,
+                last_active=CURRENT_TIMESTAMP
+            WHERE user_id=%s
+            """,
+            (not visible, visible, session['user_id'])
+        )
+        conn.commit()
+        return jsonify({'success': True, 'visible': visible})
+    except Exception as e:
+        conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
@@ -272,10 +360,11 @@ def get_profile():
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord        TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_username TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+        ensure_presence_columns(cur)
         conn.commit()
 
         cur.execute(
-            'SELECT username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE user_id = %s',
+            'SELECT username, about_me, interests, discord, steam_username, avatar_seed, COALESCE(is_invisible,FALSE) FROM users WHERE user_id = %s',
             (session['user_id'],)
         )
         row = cur.fetchone()
@@ -287,6 +376,7 @@ def get_profile():
             'discord':        row[3] or '',
             'steam_username': row[4] or '',
             'avatar_seed':    row[5] or row[0],
+            'visible':        not bool(row[6]),
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -520,6 +610,269 @@ def all_steam_games():
         cur.close(); conn.close()
 
 
+#  Friends 
+
+def ensure_friend_requests_table(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS friend_requests (
+            id SERIAL PRIMARY KEY,
+            requester_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            receiver_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            CHECK (requester_id != receiver_id),
+            UNIQUE (requester_id, receiver_id)
+        )
+    """)
+
+
+def ensure_presence_columns(cur):
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'offline'")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT FALSE")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_invisible BOOLEAN DEFAULT FALSE")
+    # Do not use status for live presence/invisibility. Existing databases may
+    # have a users_status_chk constraint that rejects values like active/invisible.
+    cur.execute("UPDATE users SET is_invisible=TRUE WHERE status='invisible'")
+    cur.execute("UPDATE users SET status='offline' WHERE status IS NULL OR status IN ('active','invisible')")
+
+
+def ensure_message_read_column(cur):
+    # NULL = unread by receiver. Filled when the receiver opens that chat.
+    cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMP")
+
+
+def touch_current_user(cur):
+    if 'user_id' in session:
+        ensure_presence_columns(cur)
+        cur.execute("""
+            UPDATE users
+            SET status=CASE WHEN status IS NULL OR status IN ('active','invisible') THEN 'offline' ELSE status END,
+                is_online=CASE WHEN COALESCE(is_invisible,FALSE) THEN FALSE ELSE TRUE END,
+                last_active=CURRENT_TIMESTAMP
+            WHERE user_id=%s
+        """, (session['user_id'],))
+
+
+def get_user_id_by_username(cur, username):
+    cur.execute('SELECT user_id, username FROM users WHERE username = %s', (username,))
+    return cur.fetchone()
+
+
+def friendship_status(cur, my_id, other_id):
+    cur.execute("""
+        SELECT requester_id, receiver_id, status
+        FROM friend_requests
+        WHERE (requester_id=%s AND receiver_id=%s) OR (requester_id=%s AND receiver_id=%s)
+        LIMIT 1
+    """, (my_id, other_id, other_id, my_id))
+    row = cur.fetchone()
+    if not row:
+        return 'none'
+    requester_id, receiver_id, status = row
+    if status == 'accepted':
+        return 'friends'
+    if status == 'pending' and requester_id == my_id:
+        return 'outgoing'
+    if status == 'pending' and receiver_id == my_id:
+        return 'incoming'
+    return status or 'none'
+
+
+@app.route('/api/friends', methods=['GET'])
+def friends_list():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_friend_requests_table(cur)
+        ensure_message_read_column(cur)
+        touch_current_user(cur)
+        conn.commit()
+        my_id = session['user_id']
+
+        cur.execute("""
+            SELECT u.username,
+                   CASE WHEN u.last_active > CURRENT_TIMESTAMP - INTERVAL '30 seconds' AND COALESCE(u.is_invisible,FALSE)=FALSE THEN true ELSE false END AS online,
+                   COALESCE(u.avatar_seed, u.username),
+                   COALESCE(unread.count, 0) AS unread_count
+            FROM friend_requests fr
+            JOIN users u ON u.user_id = CASE WHEN fr.requester_id=%s THEN fr.receiver_id ELSE fr.requester_id END
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS count FROM messages
+                WHERE sender_id = u.user_id AND receiver_id = %s AND read_at IS NULL
+            ) unread ON true
+            WHERE fr.status='accepted' AND (fr.requester_id=%s OR fr.receiver_id=%s)
+            ORDER BY online DESC, u.username ASC
+        """, (my_id, my_id, my_id, my_id))
+        friends = [{'username': r[0], 'online': bool(r[1]), 'avatar_seed': r[2], 'unread_count': int(r[3] or 0)} for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT u.username
+            FROM friend_requests fr
+            JOIN users u ON u.user_id = fr.requester_id
+            WHERE fr.receiver_id=%s AND fr.status='pending'
+            ORDER BY fr.created_at DESC
+        """, (my_id,))
+        incoming = [{'username': r[0]} for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT u.username
+            FROM friend_requests fr
+            JOIN users u ON u.user_id = fr.receiver_id
+            WHERE fr.requester_id=%s AND fr.status='pending'
+            ORDER BY fr.created_at DESC
+        """, (my_id,))
+        outgoing = [{'username': r[0]} for r in cur.fetchall()]
+
+        return jsonify({'success': True, 'friends': friends, 'incoming': incoming, 'outgoing': outgoing})
+    except Exception as e:
+        print(e)
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/friends/request', methods=['POST'])
+def friend_request():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    if not username:
+        return jsonify({'success': False, 'error': 'Missing username'}), 400
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_friend_requests_table(cur)
+        my_id = session['user_id']
+        other = get_user_id_by_username(cur, username)
+        if not other:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        other_id = other[0]
+        if other_id == my_id:
+            return jsonify({'success': False, 'error': 'You cannot add yourself'}), 400
+
+        cur.execute("""
+            SELECT id, requester_id, receiver_id, status
+            FROM friend_requests
+            WHERE (requester_id=%s AND receiver_id=%s) OR (requester_id=%s AND receiver_id=%s)
+            LIMIT 1
+        """, (my_id, other_id, other_id, my_id))
+        existing = cur.fetchone()
+        if existing:
+            req_id, requester_id, receiver_id, status = existing
+            if status == 'accepted':
+                return jsonify({'success': True, 'status': 'friends', 'message': 'Already friends'})
+            if requester_id == other_id and receiver_id == my_id:
+                cur.execute("UPDATE friend_requests SET status='accepted', updated_at=CURRENT_TIMESTAMP WHERE id=%s", (req_id,))
+                conn.commit()
+                return jsonify({'success': True, 'status': 'friends', 'message': 'Friend request accepted'})
+            return jsonify({'success': True, 'status': 'outgoing', 'message': 'Friend request already sent'})
+
+        cur.execute(
+            "INSERT INTO friend_requests (requester_id, receiver_id, status) VALUES (%s,%s,'pending')",
+            (my_id, other_id)
+        )
+        conn.commit()
+        return jsonify({'success': True, 'status': 'outgoing', 'message': 'Friend request sent'})
+    except Exception as e:
+        print(e)
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/friends/accept', methods=['POST'])
+def friend_accept():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_friend_requests_table(cur)
+        other = get_user_id_by_username(cur, username)
+        if not other:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        cur.execute("""
+            UPDATE friend_requests
+            SET status='accepted', updated_at=CURRENT_TIMESTAMP
+            WHERE requester_id=%s AND receiver_id=%s AND status='pending'
+        """, (other[0], session['user_id']))
+        if cur.rowcount == 0:
+            return jsonify({'success': False, 'error': 'No pending request found'}), 404
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/friends/decline', methods=['POST'])
+@app.route('/api/friends/ignore', methods=['POST'])
+def friend_decline():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    data = request.get_json() or {}
+    username = data.get('username', '').strip()
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_friend_requests_table(cur)
+        other = get_user_id_by_username(cur, username)
+        if not other:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        cur.execute("""
+            DELETE FROM friend_requests
+            WHERE requester_id=%s AND receiver_id=%s AND status='pending'
+        """, (other[0], session['user_id']))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/friends/<username>', methods=['DELETE'])
+def friend_remove(username):
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_friend_requests_table(cur)
+        other = get_user_id_by_username(cur, username)
+        if not other:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        cur.execute("""
+            DELETE FROM friend_requests
+            WHERE status='accepted' AND ((requester_id=%s AND receiver_id=%s) OR (requester_id=%s AND receiver_id=%s))
+        """, (session['user_id'], other[0], other[0], session['user_id']))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
 #  Chat HTTP endpoints 
 
 @app.route('/api/chat/contacts', methods=['GET'])
@@ -530,24 +883,34 @@ def chat_contacts():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
-        # JOIN LATERAL runs the inner subquery once per row of the outer table (users).
-        # Here it fetches the single most-recent message between the current user and
-        # each other user. A plain JOIN + GROUP BY can't do this cleanly because we need
-        # the actual message text, not just an aggregated timestamp.
+        ensure_friend_requests_table(cur)
+        ensure_message_read_column(cur)
+        touch_current_user(cur)
+        conn.commit()
+        # Friends show up even before a first message. The lateral join still grabs
+        # the newest message when one exists so the old chat sidebar behavior remains.
         cur.execute("""
-            SELECT u.username, m.message, m.sent_at
-            FROM users u
-            JOIN LATERAL (
+            SELECT u.username, m.message, m.sent_at,
+                   CASE WHEN u.last_active > CURRENT_TIMESTAMP - INTERVAL '30 seconds' AND COALESCE(u.is_invisible,FALSE)=FALSE THEN true ELSE false END AS online,
+                   COALESCE(u.avatar_seed, u.username),
+                   COALESCE(unread.count, 0) AS unread_count
+            FROM friend_requests fr
+            JOIN users u ON u.user_id = CASE WHEN fr.requester_id=%s THEN fr.receiver_id ELSE fr.requester_id END
+            LEFT JOIN LATERAL (
                 SELECT message, sent_at FROM messages
                 WHERE (sender_id = %s AND receiver_id = u.user_id)
                    OR (sender_id = u.user_id AND receiver_id = %s)
                 ORDER BY sent_at DESC LIMIT 1
             ) m ON true
-            WHERE u.user_id != %s
-            ORDER BY m.sent_at DESC
-        """, (session['user_id'], session['user_id'], session['user_id']))
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS count FROM messages
+                WHERE sender_id = u.user_id AND receiver_id = %s AND read_at IS NULL
+            ) unread ON true
+            WHERE fr.status='accepted' AND (fr.requester_id=%s OR fr.receiver_id=%s)
+            ORDER BY COALESCE(m.sent_at, fr.updated_at) DESC, u.username ASC
+        """, (session['user_id'], session['user_id'], session['user_id'], session['user_id'], session['user_id'], session['user_id']))
         contacts = [
-            {'username': r[0], 'last_message': r[1], 'last_time': r[2].strftime('%H:%M') if r[2] else ''}
+            {'username': r[0], 'last_message': r[1] or '', 'last_time': r[2].strftime('%H:%M') if r[2] else '', 'is_friend': True, 'online': bool(r[3]), 'avatar_seed': r[4], 'unread_count': int(r[5] or 0)}
             for r in cur.fetchall()
         ]
         return jsonify({'success': True, 'contacts': contacts})
@@ -571,6 +934,12 @@ def chat_history(partner_username):
         if not partner:
             return jsonify({'success': False, 'error': 'User not found'}), 404
         my_id = session['user_id']
+        ensure_friend_requests_table(cur)
+        ensure_message_read_column(cur)
+        if friendship_status(cur, my_id, partner[0]) != 'friends':
+            return jsonify({'success': False, 'error': 'You can only view chats with friends'}), 403
+        cur.execute("UPDATE messages SET read_at=CURRENT_TIMESTAMP WHERE sender_id=%s AND receiver_id=%s AND read_at IS NULL", (partner[0], my_id))
+        conn.commit()
         cur.execute("""
             SELECT u.username, m.message, m.sent_at
             FROM messages m JOIN users u ON u.user_id = m.sender_id
@@ -584,6 +953,29 @@ def chat_history(partner_username):
         return jsonify({'success': True, 'messages': messages})
     except Exception as e:
         print(e)
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/chat/read/<partner_username>', methods=['POST'])
+def chat_mark_read(partner_username):
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        cur.execute('SELECT user_id FROM users WHERE username = %s', (partner_username,))
+        partner = cur.fetchone()
+        if not partner:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+        ensure_message_read_column(cur)
+        cur.execute("UPDATE messages SET read_at=CURRENT_TIMESTAMP WHERE sender_id=%s AND receiver_id=%s AND read_at IS NULL", (partner[0], session['user_id']))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
@@ -608,6 +1000,10 @@ def chat_send():
         receiver = cur.fetchone()
         if not receiver:
             return jsonify({'success': False, 'error': 'Recipient not found'}), 404
+        ensure_friend_requests_table(cur)
+        ensure_message_read_column(cur)
+        if friendship_status(cur, session['user_id'], receiver[0]) != 'friends':
+            return jsonify({'success': False, 'error': 'You can only message friends'}), 403
         cur.execute(
             'INSERT INTO messages (sender_id, receiver_id, message) VALUES (%s,%s,%s)',
             (session['user_id'], receiver[0], message_text)
@@ -634,11 +1030,16 @@ def search_users():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
+        ensure_friend_requests_table(cur)
+        conn.commit()
         cur.execute(
-            "SELECT username FROM users WHERE username ILIKE %s AND user_id != %s LIMIT 10",
+            "SELECT user_id, username FROM users WHERE username ILIKE %s AND user_id != %s LIMIT 10",
             (f'%{q}%', session['user_id'])
         )
-        users = [{'username': r[0]} for r in cur.fetchall()]
+        users = [
+            {'username': r[1], 'friendship_status': friendship_status(cur, session['user_id'], r[0])}
+            for r in cur.fetchall()
+        ]
         return jsonify({'success': True, 'users': users})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
