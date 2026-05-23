@@ -57,7 +57,7 @@ function initLogin() {
                 // which exposes setLoggedIn and checkAdmin globally so the iframe can trigger
                 // state updates on the parent without a full page reload.
                 if (window.parent && window.parent.setLoggedIn)
-                    window.parent.setLoggedIn(true, data.username);
+                    window.parent.setLoggedIn(true, data.username, data.avatar_seed || data.username);
                 // tell the parent to refresh the admin panel after login
                 if (window.parent && window.parent.checkAdmin)
                     window.parent.checkAdmin();
@@ -117,7 +117,7 @@ function initRegister() {
 
             if (data.success) {
                 if (window.parent && window.parent.setLoggedIn)
-                    window.parent.setLoggedIn(true, data.username);
+                    window.parent.setLoggedIn(true, data.username, data.avatar_seed || data.username);
                 window.parent.closeModalPage();
             } else {
                 errorMsg.textContent   = data.error || 'Registration failed';
@@ -140,7 +140,8 @@ function initRegister() {
 // ══════════════════════════════════════════════════════════
 
 let editMode       = false;
-let profileData    = { about_me: '', interests: '', discord: '', steam_username: '' };
+let profileData    = { about_me: '', interests: '', discord: '', steam_username: '', avatar_seed: '' };
+let pendingAvatarSeed = '';
 let dbColumnsExist = false;
 let userGames      = [];
 
@@ -162,8 +163,9 @@ async function loadProfile() {
             return;
         }
         document.getElementById('profileName').textContent = data.username;
-        document.getElementById('profileAvatar').src =
-            `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(data.username)}`;
+        profileData.avatar_seed = data.avatar_seed || data.username;
+        pendingAvatarSeed = profileData.avatar_seed;
+        setProfileAvatar(profileData.avatar_seed);
 
         await loadUserGames();
 
@@ -177,13 +179,103 @@ async function loadProfile() {
                     interests:      profData.interests      || '',
                     discord:        profData.discord        || '',
                     steam_username: profData.steam_username || '',
+                    avatar_seed:    profData.avatar_seed    || data.username,
                 };
+                pendingAvatarSeed = profileData.avatar_seed;
+                setProfileAvatar(profileData.avatar_seed);
                 renderView();
             }
         } catch (_) {}
 
     } catch (e) {
         document.getElementById('profileName').textContent = 'Could not load profile';
+    }
+}
+
+const baseAvatarSeeds = ['GameScape','PixelMage','ShadowFox','NeonNinja','LootGoblin','CosmicCat','DragonRider','ArcadeHero','CyberWolf','MoonKnight','StarPanda','QuestCat'];
+let avatarSeeds = [...baseAvatarSeeds];
+function avatarUrl(seed) {
+    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
+}
+function setProfileAvatar(seed) {
+    const img = document.getElementById('profileAvatar');
+    if (img) img.src = avatarUrl(seed);
+}
+function renderAvatarPicker() {
+    const el = document.getElementById('avatarPicker');
+    if (!el) return;
+    const current = pendingAvatarSeed || profileData.avatar_seed;
+    const choices = avatarSeeds.map(seed => `
+        <button type="button" class="avatar-choice ${seed === current ? 'selected' : ''}" onclick="chooseAvatar('${seed}')">
+            <img src="${avatarUrl(seed)}" alt="${seed}">
+        </button>`).join('');
+    el.innerHTML = `
+        <div class="avatar-choice-grid">${choices}</div>
+        <div class="avatar-picker-actions">
+            <button type="button" class="avatar-random-btn" onclick="randomizeAvatarChoices()">Randomize</button>
+            <button type="button" class="avatar-apply-btn" onclick="applyAvatarChoice()" ${current === profileData.avatar_seed ? 'disabled' : ''}>Apply</button>
+        </div>`;
+}
+function toggleAvatarPicker() {
+    const el = document.getElementById('avatarPicker');
+    if (!el) return;
+    const opening = el.style.display !== 'flex';
+    if (opening) {
+        pendingAvatarSeed = profileData.avatar_seed;
+        avatarSeeds = profileData.avatar_seed ? [profileData.avatar_seed, ...baseAvatarSeeds.filter(seed => seed !== profileData.avatar_seed)].slice(0, 12) : [...baseAvatarSeeds];
+        renderAvatarPicker();
+    } else {
+        pendingAvatarSeed = '';
+        setProfileAvatar(profileData.avatar_seed);
+    }
+    el.style.display = opening ? 'flex' : 'none';
+}
+function chooseAvatar(seed) {
+    pendingAvatarSeed = seed;
+    setProfileAvatar(seed); // preview only; nothing is saved until Apply is clicked
+    renderAvatarPicker();
+}
+function randomAvatarSeed() {
+    return `avatar-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+function randomizeAvatarChoices() {
+    avatarSeeds = Array.from({ length: 12 }, randomAvatarSeed);
+    pendingAvatarSeed = avatarSeeds[0];
+    setProfileAvatar(pendingAvatarSeed); // preview only
+    renderAvatarPicker();
+}
+async function applyAvatarChoice() {
+    const seed = pendingAvatarSeed || profileData.avatar_seed;
+    if (seed === profileData.avatar_seed) return;
+    await saveAvatarSeed(seed);
+}
+async function saveAvatarSeed(seed) {
+    try {
+        const res = await fetch('/api/profile', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({
+                about_me:       profileData.about_me       || '',
+                interests:      profileData.interests      || '',
+                discord:        profileData.discord        || '',
+                steam_username: profileData.steam_username || '',
+                avatar_seed:    seed,
+            }),
+        });
+        const data = await res.json();
+        if (!data.success) throw new Error(data.error || 'Could not save avatar');
+        profileData.avatar_seed = data.avatar_seed || seed;
+        pendingAvatarSeed = profileData.avatar_seed;
+        setProfileAvatar(profileData.avatar_seed);
+        renderAvatarPicker();
+        const picker = document.getElementById('avatarPicker');
+        if (picker) picker.style.display = 'none';
+        if (window.parent && window.parent.setLoggedIn)
+            window.parent.setLoggedIn(true, document.getElementById('profileName')?.textContent, profileData.avatar_seed);
+    } catch (e) {
+        setProfileAvatar(profileData.avatar_seed);
+        showProfileError(e.message || 'Could not save avatar');
     }
 }
 
@@ -308,12 +400,15 @@ function toggleEdit() {
     const ge = document.getElementById('gamesEdit');
     if (gv) gv.style.display = editMode ? 'none' : '';
     if (ge) ge.style.display = editMode ? 'block' : 'none';
+    const ap = document.getElementById('avatarPicker');
+    if (ap && editMode) { renderAvatarPicker(); }
 
     if (editMode) {
         const aboutEdit = document.getElementById('aboutEdit');
         const intInput  = document.getElementById('interestsInput');
         if (aboutEdit) aboutEdit.value = profileData.about_me  || '';
         if (intInput)  intInput.value  = profileData.interests || '';
+        renderAvatarPicker();
         renderGamesEdit();
     }
 
@@ -330,14 +425,8 @@ async function saveProfile() {
         // discord and steam_username are saved via their own popup, not here
         discord:        profileData.discord        || '',
         steam_username: profileData.steam_username || '',
+        avatar_seed:    profileData.avatar_seed    || '',
     };
-    // Don't save if nothing changed
-    if (!payload.about_me && !payload.interests
-        && !profileData.about_me && !profileData.interests) {
-        toggleEdit();
-        return;
-    }
-
     const saveBtn = document.getElementById('saveBtn');
     const origText = saveBtn?.textContent;
     if (saveBtn) { saveBtn.textContent = 'Saving…'; saveBtn.disabled = true; }
@@ -355,6 +444,9 @@ async function saveProfile() {
             profileData.interests      = payload.interests;
             profileData.discord        = payload.discord;
             profileData.steam_username = payload.steam_username;
+            profileData.avatar_seed    = payload.avatar_seed;
+            if (window.parent && window.parent.setLoggedIn)
+                window.parent.setLoggedIn(true, document.getElementById('profileName')?.textContent, payload.avatar_seed);
             renderView();
             toggleEdit();
         } else {
@@ -465,6 +557,7 @@ async function saveContact() {
                 interests:      profileData.interests      || '',
                 discord:        profileData.discord        || '',
                 steam_username: profileData.steam_username || '',
+                avatar_seed:    profileData.avatar_seed    || '',
             }),
         });
         const data = await res.json();
@@ -630,11 +723,28 @@ function applyVisibilityUI(visible) {
 
 function initVisibilityToggle() {
     const eyeBtn = document.getElementById('visibilityBtn');
-    if (!eyeBtn) return;
+    if (!eyeBtn || eyeBtn.dataset.visibilityReady === 'true') return;
+    eyeBtn.dataset.visibilityReady = 'true';
     let visible = getVisible();
+    fetch('/api/profile', { credentials: 'same-origin' })
+        .then(r => r.json())
+        .then(data => { if (data.success && typeof data.visible === 'boolean') { visible = data.visible; localStorage.setItem(VISIBLE_KEY, String(visible)); applyVisibilityUI(visible); } })
+        .catch(() => {});
     applyVisibilityUI(visible);
-    eyeBtn.addEventListener('click', () => {
+    eyeBtn.addEventListener('click', async () => {
         visible = !visible;
+        localStorage.setItem(VISIBLE_KEY, String(visible));
+        applyVisibilityUI(visible);
+        try {
+            const res = await fetch('/api/visibility', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ visible })
+            });
+            const data = await res.json();
+            if (data.success && typeof data.visible === 'boolean') visible = data.visible;
+        } catch (e) {}
         localStorage.setItem(VISIBLE_KEY, String(visible));
         applyVisibilityUI(visible);
         // Notify the parent map page so the demo marker updates immediately
@@ -669,6 +779,8 @@ function initChat() {
     let typingTimer        = null;
     let isSendingTyping    = false;
     let searchDebounce     = null;
+    let friendsState       = { friends: [], incoming: [], outgoing: [] };
+    let activeChatTab      = 'inbox';
 
     //  DOM refs 
     const statusSpan        = document.getElementById('connectionStatus');
@@ -681,6 +793,12 @@ function initChat() {
     const userSearchResults = document.getElementById('userSearchResults');
     const contactsPanel     = document.getElementById('contactsPanel');
     const conversationPanel = document.getElementById('conversationPanel');
+    const addFriendToggle   = document.getElementById('addFriendToggle');
+    const addFriendBox      = document.getElementById('addFriendBox');
+    const addFriendInput    = document.getElementById('addFriendInput');
+    const addFriendBtn      = document.getElementById('addFriendBtn');
+    const addFriendMsg      = document.getElementById('addFriendMsg');
+    const requestsListDiv   = document.getElementById('friendRequestsList');
 
     // animated background blob (second blob to complement body::after)
     const blob       = document.createElement('div');
@@ -711,6 +829,7 @@ function initChat() {
                 statusSpan.textContent = `Connected as ${data.username}`;
                 statusSpan.className   = 'status-online';
                 await loadContactsFromDB();
+                await loadFriendsState();
                 connectWebSocket(data.username);
             }
         } catch (e) { console.warn('Session check failed:', e); }
@@ -724,6 +843,71 @@ function initChat() {
             const data = await res.json();
             if (data.success) { dbContacts = data.contacts; renderContacts(); }
         } catch (e) { console.warn('Failed to load contacts:', e); }
+    }
+
+
+    async function loadFriendsState() {
+        if (!isLoggedIn) return;
+        try {
+            const res  = await fetch('/api/friends', { credentials: 'same-origin' });
+            const data = await res.json();
+            if (data.success) {
+                friendsState = data;
+                renderFriendRequests();
+                renderContacts();
+                updateUnreadTitle();
+            }
+        } catch (e) { console.warn('Failed to load friends:', e); }
+    }
+
+    function friendInfo(username) {
+        return (friendsState.friends || []).find(f => f.username === username) || null;
+    }
+
+    function requestInfo(username) {
+        if ((friendsState.incoming || []).find(r => r.username === username)) return 'incoming';
+        if ((friendsState.outgoing || []).find(r => r.username === username)) return 'outgoing';
+        return 'none';
+    }
+
+    function updateUnreadTitle() {
+        const total = (friendsState.friends || []).reduce((sum, f) => sum + Number(f.unread_count || 0), 0);
+        document.title = total > 0 ? `(${total}) GameScape - Chat` : 'GameScape - Chat';
+    }
+
+    function renderFriendRequests() {
+        if (!requestsListDiv) return;
+        const incoming = friendsState.incoming || [];
+        if (activeChatTab !== 'requests') { requestsListDiv.style.display = 'none'; return; }
+        requestsListDiv.style.display = 'block';
+        if (incoming.length === 0) {
+            requestsListDiv.innerHTML = '<div class="friend-empty">No friend requests</div>';
+            return;
+        }
+        requestsListDiv.innerHTML = incoming.map(r => `
+            <div class="friend-request-row">
+                <span>${escapeHtml(r.username)}</span>
+                <div>
+                    <button class="friend-mini-btn" data-friend-action="accept" data-username="${escapeHtml(r.username)}">Accept</button>
+                    <button class="friend-mini-btn muted" data-friend-action="ignore" data-username="${escapeHtml(r.username)}">Ignore</button>
+                </div>
+            </div>`).join('');
+    }
+
+    async function friendAction(action, username) {
+        let url = '/api/friends/request';
+        let method = 'POST';
+        if (action === 'accept') url = '/api/friends/accept';
+        if (action === 'ignore') url = '/api/friends/ignore';
+        if (action === 'remove') { url = `/api/friends/${encodeURIComponent(username)}`; method = 'DELETE'; }
+        const options = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' };
+        if (method !== 'DELETE') options.body = JSON.stringify({ username });
+        const res = await fetch(url, options);
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) throw new Error(data.error || 'Action failed');
+        await loadContactsFromDB();
+        await loadFriendsState();
+        return data;
     }
 
     async function loadChatHistory(partner) {
@@ -741,11 +925,13 @@ function initChat() {
 
     async function saveMessageToDB(to, text) {
         try {
-            await fetch('/api/chat/send', {
+            const res = await fetch('/api/chat/send', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 credentials: 'same-origin', body: JSON.stringify({ to, message: text })
             });
-        } catch (_) {}
+            const data = await res.json().catch(() => ({}));
+            return res.ok && data.success !== false;
+        } catch (_) { return false; }
     }
 
     //  Unified search bar 
@@ -790,13 +976,16 @@ function initChat() {
             newUsers.forEach(u => {
                 const item       = document.createElement('div');
                 item.className   = 'search-result-item';
-                item.innerHTML   = `<div class="search-result-avatar">${u.username.charAt(0).toUpperCase()}</div><span>${escapeHtml(u.username)}</span>`;
-                item.addEventListener('click', () => {
+                const state = u.friendship_status || requestInfo(u.username);
+                const actionLabel = state === 'friends' ? 'Chat' : state === 'incoming' ? 'Accept' : state === 'outgoing' ? 'Pending' : 'Add';
+                item.innerHTML   = `<div class="search-result-avatar">${u.username.charAt(0).toUpperCase()}</div><span>${escapeHtml(u.username)}</span><button class="friend-mini-btn" type="button">${actionLabel}</button>`;
+                item.addEventListener('click', async () => {
                     userSearchResults.style.display = 'none';
                     userSearchResults.innerHTML     = '';
                     if (searchInput) searchInput.value = '';
                     document.querySelectorAll('.contact-item').forEach(el => el.style.display = 'flex');
-                    openChatWith(u.username);
+                    if (state === 'friends') openChatWith(u.username);
+                    else if (state !== 'outgoing') { try { await friendAction(state === 'incoming' ? 'accept' : 'add', u.username); } catch (e) { alert(e.message); } }
                 });
                 userSearchResults.appendChild(item);
             });
@@ -815,19 +1004,41 @@ function initChat() {
 
     function renderContacts() {
         contactsListDiv.innerHTML = '';
+
+        if (activeChatTab === 'requests') {
+            if (requestsListDiv) requestsListDiv.style.display = 'block';
+            return;
+        }
+        if (requestsListDiv) requestsListDiv.style.display = 'none';
+
         const allNames   = new Set();
         const contactMap = {};
 
         dbContacts.forEach(c => {
             allNames.add(c.username);
-            contactMap[c.username] = { lastMessage: c.last_message, lastTime: c.last_time, isOnline: false };
+            contactMap[c.username] = {
+                lastMessage: c.last_message || '',
+                lastTime: c.last_time || '',
+                isOnline: !!c.online,
+                unreadCount: Number(c.unread_count || 0),
+                isFriend: !!c.is_friend
+            };
+        });
+
+        (friendsState.friends || []).forEach(f => {
+            if (activeChatTab === 'friends') allNames.add(f.username);
+            if (contactMap[f.username]) {
+                contactMap[f.username].isOnline = !!f.online;
+                contactMap[f.username].unreadCount = Number(f.unread_count || 0);
+                contactMap[f.username].isFriend = true;
+            } else if (activeChatTab === 'friends') {
+                contactMap[f.username] = { lastMessage: '', lastTime: '', isOnline: !!f.online, unreadCount: Number(f.unread_count || 0), isFriend: true };
+            }
         });
 
         onlineUsers.forEach(u => {
             if (u === currentUsername) return;
-            allNames.add(u);
             if (contactMap[u]) contactMap[u].isOnline = true;
-            else contactMap[u] = { lastMessage: '', lastTime: '', isOnline: true };
         });
 
         // If not logged in, show a clear prompt and redirect to the map login immediately
@@ -844,7 +1055,9 @@ function initChat() {
         }
 
         if (allNames.size === 0) {
-            contactsListDiv.innerHTML = '<div class="contact-placeholder">No chats yet search for a player above</div>';
+            contactsListDiv.innerHTML = activeChatTab === 'friends'
+                ? '<div class="contact-placeholder">No friends yet</div>'
+                : '<div class="contact-placeholder">No chats yet search for a player above</div>';
             return;
         }
 
@@ -852,10 +1065,12 @@ function initChat() {
             const info     = contactMap[username] || {};
             const isActive = currentChatPartner === username;
 
-            let statusLabel;
-            if (info.isOnline) statusLabel = '🟢 Online';
-            else if (info.lastTime) statusLabel = `Last msg ${info.lastTime}`;
-            else                    statusLabel = '⚫ Offline';
+            const inboxPreview  = info.lastMessage ? escapeHtml(info.lastMessage) : 'No messages yet';
+            const statusLabel   = activeChatTab === 'friends'
+                ? (info.isOnline ? 'Online' : 'Offline')
+                : (info.lastTime ? `${inboxPreview} · ${escapeHtml(info.lastTime)}` : inboxPreview);
+            const unreadBadge = info.unreadCount > 0 ? `<span class="unread-badge">${info.unreadCount}</span>` : '';
+            const removeBtn = activeChatTab === 'friends' && info.isFriend ? `<button class="friend-remove-btn" data-remove-friend="${escapeHtml(username)}" title="Remove friend">Remove</button>` : '';
 
             const div             = document.createElement('div');
             div.className         = `contact-item ${isActive ? 'active' : ''}`;
@@ -863,10 +1078,19 @@ function initChat() {
             div.innerHTML         = `
                 <div class="contact-avatar">${username.charAt(0).toUpperCase()}</div>
                 <div class="contact-info">
-                    <div class="contact-name">${escapeHtml(username)}</div>
+                    <div class="contact-name">${escapeHtml(username)} ${unreadBadge}</div>
                     <div class="contact-status ${info.isOnline ? 'online' : ''}">${statusLabel}</div>
-                </div>`;
-            div.addEventListener('click', () => {
+                </div>
+                ${removeBtn}`;
+            div.addEventListener('click', async (e) => {
+                const removeTarget = e.target.closest('[data-remove-friend]');
+                if (removeTarget) {
+                    e.stopPropagation();
+                    if (confirm(`Remove ${username} as friend?`)) {
+                        try { await friendAction('remove', username); if (currentChatPartner === username) currentChatPartner = null; } catch (err) { alert(err.message); }
+                    }
+                    return;
+                }
                 document.querySelectorAll('.contact-item').forEach(el => el.classList.remove('active'));
                 div.classList.add('active');
                 openChatWith(username);
@@ -894,7 +1118,9 @@ function initChat() {
         sendBtn.disabled      = false;
         messageInput.focus();
         showConversationPanel(); // mobile: slide conversation into view
+        await fetch(`/api/chat/read/${encodeURIComponent(username)}`, { method: 'POST', credentials: 'same-origin' }).catch(() => {});
         if (isLoggedIn) await loadContactsFromDB(); // refresh so new chat appears in sidebar
+        if (isLoggedIn) await loadFriendsState();
 
         // Update the status shown under the partner name in the conversation header
         updatePartnerStatus(username);
@@ -997,6 +1223,7 @@ function initChat() {
 
             removeTypingIndicator();
             addMessageLocally(from, currentUsername, data.message);
+            if (currentChatPartner !== from) loadFriendsState();
             if (!onlineUsers.has(from)) { onlineUsers.add(from); loadContactsFromDB(); }
         };
 
@@ -1030,7 +1257,8 @@ function initChat() {
             chatSocket.send(JSON.stringify({ to: currentChatPartner, type: 'stop_typing' }));
 
 
-        await saveMessageToDB(currentChatPartner, text);
+        const saved = await saveMessageToDB(currentChatPartner, text);
+        if (!saved) { alert('You can only message friends'); return; }
         addMessageLocally(currentUsername, currentChatPartner, text);
         if (chatSocket && chatSocket.readyState === WebSocket.OPEN)
             chatSocket.send(JSON.stringify({ to: currentChatPartner, type: 'message', message: text }));
@@ -1042,11 +1270,11 @@ function initChat() {
     function updatePartnerStatus(username) {
         const statusEl = document.getElementById('chatPartnerStatus');
         if (!statusEl) return;
-        if (onlineUsers.has(username)) {
+        const contact = dbContacts.find(c => c.username === username);
+        if (onlineUsers.has(username) || contact?.online) {
             statusEl.textContent = '🟢 Online';
             statusEl.style.color = '#39d98a';
         } else {
-            const contact = dbContacts.find(c => c.username === username);
             statusEl.textContent = contact?.last_time ? `Last seen ${contact.last_time}` : 'Offline';
             statusEl.style.color = '#6c6f78';
         }
@@ -1058,6 +1286,38 @@ function initChat() {
     messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter' && !messageInput.disabled) sendMessage(); });
     messageInput.addEventListener('keydown', (e) => { if (e.key !== 'Enter') handleTyping(); });
 
+    document.addEventListener('click', async (e) => {
+        const tab = e.target.closest('[data-chat-tab]');
+        if (tab) {
+            activeChatTab = tab.dataset.chatTab;
+            document.querySelectorAll('[data-chat-tab]').forEach(t => t.classList.toggle('active', t === tab));
+            if (requestsListDiv) requestsListDiv.style.display = activeChatTab === 'requests' ? 'block' : 'none';
+            renderFriendRequests();
+            renderContacts();
+        }
+        const actionBtn = e.target.closest('[data-friend-action]');
+        if (actionBtn) {
+            try { await friendAction(actionBtn.dataset.friendAction, actionBtn.dataset.username); }
+            catch (err) { alert(err.message); }
+        }
+    });
+
+    addFriendToggle?.addEventListener('click', () => {
+        addFriendBox.style.display = addFriendBox.style.display === 'none' ? 'block' : 'none';
+        addFriendInput?.focus();
+    });
+    addFriendBtn?.addEventListener('click', async () => {
+        const username = addFriendInput.value.trim();
+        if (!username) return;
+        try {
+            const data = await friendAction('add', username);
+            addFriendMsg.textContent = data.message || 'Friend request sent';
+            addFriendInput.value = '';
+        } catch (err) { addFriendMsg.textContent = err.message; }
+    });
+
+    setInterval(() => { if (isLoggedIn) { loadContactsFromDB(); loadFriendsState(); } }, 5000);
+
     if (searchInput) {        searchInput.addEventListener('input', (e) => handleSearchInput(e.target.value.trim()));
         searchInput.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -1067,6 +1327,12 @@ function initChat() {
             }
         });
     }
+
+    function sendPresenceHeartbeat() {
+        if (!isLoggedIn) return;
+        fetch('/api/presence', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({}) }).catch(() => {});
+    }
+    setInterval(sendPresenceHeartbeat, 15000);
 
     //  Boot 
     checkLoginState().then(() => renderContacts());
