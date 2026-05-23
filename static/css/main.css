@@ -262,6 +262,10 @@ body.chat-page::before {
 .contact-info { flex: 1; }
 .contact-name   { font-size: 14px; font-weight: 600; color: #dbdee1; }
 .contact-status { font-size: 11px; color: #39d98a; }
+.contact-name-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.contact-item.has-unread { background: rgba(155,89,182,0.16); border-left: 3px solid #39d98a; }
+.unread-badge { min-width: 18px; height: 18px; padding: 0 6px; border-radius: 999px; background: linear-gradient(135deg,#39d98a,#10b981); color: #06140d; font-size: 10px; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; box-shadow: 0 0 10px rgba(57,217,138,.35); }
+
 .contact-placeholder { text-align: center; color: #949ba4; padding: 24px; font-size: 13px; }
 
 /* Conversation panel clean dark glass, no spinning neon ring */
@@ -1355,3 +1359,203 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
 }
 .contact-popup-copy:hover  { background: rgba(57,217,138,0.28); }
 .contact-popup-copy.copied { background: linear-gradient(135deg,#39d98a,#059669); color:#051a0e; border-color:transparent; }
+/* ── Friend requests (rudimentary Discord-style layer) ── */
+.friend-requests-panel {
+  margin-top: 12px;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(14,15,18,0.48);
+  border: 1px solid rgba(155,89,182,0.22);
+}
+.friend-section-title {
+  color: #c084fc;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin: 2px 0 7px;
+}
+.friend-request-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: #dbdee1;
+  font-size: 12px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(155,89,182,0.12);
+}
+.friend-request-row:first-of-type { border-top: 0; }
+.friend-request-row.muted { color: #949ba4; }
+.friend-request-row small { color: #6c6f78; font-size: 10px; text-transform: uppercase; letter-spacing: .6px; }
+.friend-request-actions { display: flex; gap: 6px; }
+.friend-mini-btn,
+.friend-action-btn {
+  border: 1px solid rgba(192,132,252,.45);
+  border-radius: 999px;
+  background: rgba(30,31,34,.72);
+  color: #e9d5ff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 5px 9px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  transition: all .18s;
+}
+.friend-mini-btn:hover,
+.friend-action-btn:hover:not(:disabled) {
+  background: rgba(155,89,182,.25);
+  border-color: #c084fc;
+  transform: translateY(-1px);
+}
+.friend-mini-btn.accept,
+.friend-action-btn:not(:disabled) {
+  background: linear-gradient(135deg, rgba(155,89,182,.9), rgba(124,58,237,.9));
+  color: #fff;
+}
+.friend-action-btn:disabled { opacity: .55; cursor: default; }
+.friend-search-result span { flex: 1; }
+.friend-search-result { cursor: default; }
+.friend-search-result .search-result-avatar,
+.friend-search-result span,
+.friend-search-result button { pointer-events: none; }
+
+/* Discord-ish chat navigation */
+.chat-nav-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 12px;
+}
+.chat-tab {
+  border: 1px solid rgba(155,89,182,0.25);
+  background: rgba(30,31,34,0.55);
+  color: #949ba4;
+  border-radius: 12px;
+  padding: 8px 6px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  transition: all .18s;
+}
+.chat-tab:hover,
+.chat-tab.active {
+  color: #fff;
+  background: rgba(155,89,182,.28);
+  border-color: rgba(192,132,252,.65);
+  box-shadow: 0 0 14px rgba(155,89,182,.2);
+}
+.request-badge {
+  align-items: center;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  margin-left: 4px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 10px;
+}
+.contact-avatar-img {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: #1e1f22;
+  border: 2px solid rgba(155,89,182,.35);
+  flex-shrink: 0;
+}
+.request-contact { cursor: default; }
+.request-contact:hover { transform: none; }
+.request-actions-inline { display: flex; gap: 6px; flex-shrink: 0; }
+
+/* Explicit add-friend action in chat sidebar */
+.add-friend-toggle {
+  width: 100%;
+  margin-top: 10px;
+  border: 1px solid rgba(57,217,138,.45);
+  border-radius: 14px;
+  background: linear-gradient(135deg, rgba(57,217,138,.18), rgba(155,89,182,.18));
+  color: #d1fae5;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  padding: 9px 10px;
+  text-transform: uppercase;
+  letter-spacing: .6px;
+  transition: all .18s;
+}
+.add-friend-toggle:hover {
+  transform: translateY(-1px);
+  border-color: rgba(57,217,138,.75);
+  box-shadow: 0 0 14px rgba(57,217,138,.16);
+}
+.add-friend-box {
+  margin-top: 8px;
+  padding: 9px;
+  border-radius: 16px;
+  background: rgba(14,15,20,.72);
+  border: 1px solid rgba(155,89,182,.24);
+}
+.add-friend-box input {
+  width: 100%;
+  background: rgba(25,26,34,.82);
+  border: 1px solid rgba(155,89,182,.3);
+  color: #dbdee1;
+  padding: 8px 10px;
+  border-radius: 11px;
+  font-size: 12px;
+  font-family: inherit;
+  outline: none;
+}
+.add-friend-box input:focus { border-color: #39d98a; box-shadow: 0 0 8px rgba(57,217,138,.18); }
+.add-friend-box button {
+  width: 100%;
+  margin-top: 7px;
+  border: 0;
+  border-radius: 11px;
+  background: linear-gradient(135deg,#39d98a,#7c3aed);
+  color: #fff;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 8px 10px;
+  text-transform: uppercase;
+  letter-spacing: .55px;
+}
+.add-friend-box button:disabled { opacity: .6; cursor: default; }
+.add-friend-msg {
+  min-height: 15px;
+  margin-top: 7px;
+  color: #949ba4;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.friend-remove-btn {
+  border: 1px solid rgba(239,68,68,.4);
+  border-radius: 999px;
+  background: rgba(127,29,29,.28);
+  color: #fecaca;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  padding: 5px 9px;
+  text-transform: uppercase;
+  letter-spacing: .5px;
+  transition: all .18s;
+  flex-shrink: 0;
+}
+.friend-remove-btn:hover {
+  background: rgba(239,68,68,.22);
+  border-color: rgba(248,113,113,.8);
+  transform: translateY(-1px);
+}

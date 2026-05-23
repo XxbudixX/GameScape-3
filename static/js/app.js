@@ -181,6 +181,9 @@ async function loadProfile() {
                     steam_username: profData.steam_username || '',
                     avatar_seed:    profData.avatar_seed    || data.username,
                 };
+                if (typeof profData.visible === 'boolean') {
+                    localStorage.setItem(VISIBLE_KEY, String(profData.visible));
+                }
                 pendingAvatarSeed = profileData.avatar_seed;
                 setProfileAvatar(profileData.avatar_seed);
                 renderView();
@@ -705,15 +708,36 @@ function applyVisibilityUI(visible) {
 function initVisibilityToggle() {
     const eyeBtn = document.getElementById('visibilityBtn');
     if (!eyeBtn) return;
-    let visible = getVisible();
-    applyVisibilityUI(visible);
-    eyeBtn.addEventListener('click', () => {
-        visible = !visible;
+    applyVisibilityUI(getVisible());
+
+    // initProfile can run this twice because the profile is loaded async.
+    // Without this guard, one click may bind multiple handlers and flip back.
+    if (eyeBtn.dataset.visibilityReady === 'true') return;
+    eyeBtn.dataset.visibilityReady = 'true';
+
+    eyeBtn.addEventListener('click', async () => {
+        const visible = !getVisible();
         localStorage.setItem(VISIBLE_KEY, String(visible));
         applyVisibilityUI(visible);
-        // Notify the parent map page so the demo marker updates immediately
-        if (window.parent && window.parent.setDemoVisible)
+
+        // Notify the parent map page so the marker updates immediately.
+        if (window.parent && window.parent.setDemoVisible) {
             window.parent.setDemoVisible(visible);
+        } else {
+            try {
+                const res = await fetch('/api/visibility', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'same-origin',
+                    body: JSON.stringify({ visible })
+                });
+                const data = await res.json().catch(() => ({}));
+                if (data && data.success && typeof data.visible === 'boolean') {
+                    localStorage.setItem(VISIBLE_KEY, String(data.visible));
+                    applyVisibilityUI(data.visible);
+                }
+            } catch (_) {}
+        }
     });
 }
 
@@ -739,10 +763,16 @@ function initChat() {
     let onlineUsers        = new Set();
     let messagesHistory    = {};
     let dbContacts         = [];
+    let friendsList        = [];
+    let incomingRequests   = [];
+    let outgoingRequests   = [];
     let isLoggedIn         = false;
     let typingTimer        = null;
     let isSendingTyping    = false;
     let searchDebounce     = null;
+    let liveRefreshTimer  = null;
+    let chatPresenceTimer = null;
+    let activeChatTab     = 'inbox';
 
     //  DOM refs 
     const statusSpan        = document.getElementById('connectionStatus');
@@ -753,6 +783,15 @@ function initChat() {
     const chatNameSpan      = document.getElementById('currentChatName');
     const searchInput       = document.getElementById('searchInput');
     const userSearchResults = document.getElementById('userSearchResults');
+    const friendRequestsPanel = document.getElementById('friendRequestsPanel');
+    const chatTabs          = document.querySelectorAll('.chat-tab');
+    const requestBadge      = document.getElementById('requestBadge');
+    const inboxBadge        = document.getElementById('inboxBadge');
+    const addFriendToggle   = document.getElementById('addFriendToggle');
+    const addFriendBox      = document.getElementById('addFriendBox');
+    const addFriendInput    = document.getElementById('addFriendInput');
+    const addFriendSubmit   = document.getElementById('addFriendSubmit');
+    const addFriendMsg      = document.getElementById('addFriendMsg');
     const contactsPanel     = document.getElementById('contactsPanel');
     const conversationPanel = document.getElementById('conversationPanel');
 
@@ -784,20 +823,239 @@ function initChat() {
                 currentUsername = data.username;
                 statusSpan.textContent = `Connected as ${data.username}`;
                 statusSpan.className   = 'status-online';
-                await loadContactsFromDB();
+                await refreshLiveChatState();
+                startChatPresenceHeartbeat();
                 connectWebSocket(data.username);
+                clearInterval(liveRefreshTimer);
+                liveRefreshTimer = setInterval(refreshLiveChatState, 5000);
             }
         } catch (e) { console.warn('Session check failed:', e); }
     }
 
     //  Database helpers 
 
+    async function loadFriends() {
+        try {
+            const res  = await fetch('/api/friends', { credentials: 'same-origin' });
+            const data = await res.json();
+            if (data.success) {
+                friendsList      = data.friends || [];
+                incomingRequests = data.incoming || [];
+                outgoingRequests = data.outgoing || [];
+                renderFriendRequests();
+            }
+        } catch (e) { console.warn('Failed to load friends:', e); }
+    }
+
     async function loadContactsFromDB() {
         try {
             const res  = await fetch('/api/chat/contacts', { credentials: 'same-origin' });
             const data = await res.json();
-            if (data.success) { dbContacts = data.contacts; renderContacts(); }
+            if (data.success) {
+                dbContacts = data.contacts || [];
+                updateUnreadBadges();
+                renderContacts();
+                if (currentChatPartner) updatePartnerStatus(currentChatPartner);
+            }
         } catch (e) { console.warn('Failed to load contacts:', e); }
+    }
+
+    async function refreshLiveChatState() {
+        await loadFriends();
+        await loadContactsFromDB();
+    }
+
+
+    function sendChatPresence(lat, lng) {
+        const body = (lat != null && lng != null) ? { lat, lng } : {};
+        return fetch('/api/presence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify(body)
+        }).catch(() => {});
+    }
+
+    function startChatPresenceHeartbeat() {
+        if (chatPresenceTimer) return;
+
+        const touchOnly = () => sendChatPresence();
+        const touchWithLocation = () => {
+            if (!navigator.geolocation) { touchOnly(); return; }
+            navigator.geolocation.getCurrentPosition(
+                pos => sendChatPresence(pos.coords.latitude, pos.coords.longitude),
+                touchOnly,
+                { enableHighAccuracy: false, timeout: 2000, maximumAge: 60000 }
+            );
+        };
+
+        // If the user came straight to Chat, this gives them/preserves a map marker.
+        // If location is denied, the server still refreshes online status and keeps old coords.
+        touchWithLocation();
+        chatPresenceTimer = setInterval(touchOnly, 10000);
+    }
+
+    function unreadTotal() {
+        return dbContacts.reduce((sum, c) => sum + Number(c.unread_count || 0), 0);
+    }
+
+    function updateUnreadBadges() {
+        const count = unreadTotal();
+        if (inboxBadge) {
+            inboxBadge.textContent = count > 9 ? '9+' : count;
+            inboxBadge.style.display = count ? 'inline-flex' : 'none';
+        }
+        document.title = count ? `(${count}) GameScape - Chat` : 'GameScape - Chat';
+    }
+
+    function setLocalUnread(username, count) {
+        dbContacts = dbContacts.map(c => c.username === username ? { ...c, unread_count: count } : c);
+        friendsList = friendsList.map(f => f.username === username ? { ...f, unread_count: count } : f);
+        updateUnreadBadges();
+    }
+
+    async function markChatRead(username) {
+        if (!username) return;
+        setLocalUnread(username, 0);
+        try {
+            await fetch(`/api/chat/read/${encodeURIComponent(username)}`, { method: 'POST', credentials: 'same-origin' });
+        } catch (_) {}
+    }
+
+    function getFriendStatus(username) {
+        if (friendsList.some(f => f.username === username)) return 'friends';
+        if (incomingRequests.some(f => f.username === username)) return 'incoming';
+        if (outgoingRequests.some(f => f.username === username)) return 'outgoing';
+        return 'none';
+    }
+
+    function renderFriendRequests() {
+        if (requestBadge) {
+            const count = incomingRequests.length;
+            requestBadge.textContent = count;
+            requestBadge.style.display = count ? 'inline-flex' : 'none';
+        }
+        // Requests are now rendered inside the Discord-like Requests tab.
+        if (friendRequestsPanel) {
+            friendRequestsPanel.style.display = 'none';
+            friendRequestsPanel.innerHTML = '';
+        }
+        if (activeChatTab === 'requests') renderContacts();
+    }
+
+    function avatarUrl(seed) {
+        return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
+    }
+
+    function renderRequestInbox() {
+        contactsListDiv.innerHTML = '';
+        if (!incomingRequests.length && !outgoingRequests.length) {
+            contactsListDiv.innerHTML = '<div class="contact-placeholder">No friend requests</div>';
+            return;
+        }
+        incomingRequests.forEach(r => {
+            const div = document.createElement('div');
+            div.className = 'contact-item request-contact';
+            div.innerHTML = `
+                <div class="contact-avatar">${r.username.charAt(0).toUpperCase()}</div>
+                <div class="contact-info"><div class="contact-name">${escapeHtml(r.username)}</div><div class="contact-status">Incoming friend request</div></div>
+                <div class="request-actions-inline">
+                    <button class="friend-mini-btn accept" data-action="accept" data-username="${escapeHtml(r.username)}">Accept</button>
+                    <button class="friend-mini-btn" data-action="ignore" data-username="${escapeHtml(r.username)}">Ignore</button>
+                </div>`;
+            contactsListDiv.appendChild(div);
+        });
+        outgoingRequests.forEach(r => {
+            const div = document.createElement('div');
+            div.className = 'contact-item request-contact muted';
+            div.innerHTML = `
+                <div class="contact-avatar">${r.username.charAt(0).toUpperCase()}</div>
+                <div class="contact-info"><div class="contact-name">${escapeHtml(r.username)}</div><div class="contact-status">Pending outgoing request</div></div>`;
+            contactsListDiv.appendChild(div);
+        });
+    }
+
+
+    async function sendFriendRequest(username) {
+        try {
+            const res = await fetch('/api/friends/request', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ username }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || !data.success) throw new Error(data.error || 'Could not send request');
+            await loadFriends();
+            await loadContactsFromDB();
+            if (searchInput?.value.trim()) searchUsersDB(searchInput.value.trim());
+            return data;
+        } catch (e) {
+            console.warn(e);
+            return { success: false, error: e.message || 'Could not send request' };
+        }
+    }
+
+    async function submitAddFriend() {
+        const username = addFriendInput?.value.trim();
+        if (!username) {
+            if (addFriendMsg) addFriendMsg.textContent = 'Type a username first';
+            return;
+        }
+        if (addFriendSubmit) addFriendSubmit.disabled = true;
+        if (addFriendMsg) addFriendMsg.textContent = 'Sending…';
+        const data = await sendFriendRequest(username);
+        if (data.success) {
+            const message = data.message || (data.status === 'friends' ? 'You are now friends' : 'Friend request sent');
+            if (addFriendMsg) addFriendMsg.textContent = `✓ ${message}`;
+            if (addFriendInput) addFriendInput.value = '';
+            activeChatTab = data.status === 'friends' ? 'friends' : 'requests';
+            chatTabs.forEach(b => b.classList.toggle('active', b.dataset.chatTab === activeChatTab));
+            renderContacts();
+        } else if (addFriendMsg) {
+            addFriendMsg.textContent = data.error || 'Could not send request';
+        }
+        if (addFriendSubmit) addFriendSubmit.disabled = false;
+    }
+
+    async function answerFriendRequest(username, action) {
+        try {
+            const endpoint = action === 'ignore' ? 'ignore' : action;
+            const res = await fetch(`/api/friends/${endpoint}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({ username }),
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.success === false) throw new Error(data.error || 'Friend request action failed');
+            await loadFriends();
+            await loadContactsFromDB();
+        } catch (e) { console.warn(e); }
+    }
+
+
+    async function removeFriend(username) {
+        if (!confirm(`Remove ${username} from your friends?`)) return;
+        try {
+            const res = await fetch(`/api/friends/${encodeURIComponent(username)}`, {
+                method: 'DELETE',
+                credentials: 'same-origin'
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!res.ok || data.success === false) throw new Error(data.error || 'Could not remove friend');
+            if (currentChatPartner === username) {
+                currentChatPartner = null;
+                chatNameSpan.textContent = 'Select a friend';
+                document.getElementById('chatPartnerStatus').textContent = '';
+                messageInput.disabled = true;
+                sendBtn.disabled = true;
+                messagesDiv.innerHTML = '<div class="placeholder-message">Select a contact to start chatting</div>';
+                showContactsPanel();
+            }
+            await loadFriends();
+            await loadContactsFromDB();
+        } catch (e) { console.warn(e); alert(e.message || 'Could not remove friend'); }
     }
 
     async function loadChatHistory(partner) {
@@ -849,28 +1107,36 @@ function initChat() {
             const res  = await fetch(`/api/users/search?q=${encodeURIComponent(query)}`, { credentials: 'same-origin' });
             const data = await res.json();
 
-            // Only show users NOT already displayed as contacts
-            const existingNames = new Set(
-                [...document.querySelectorAll('.contact-item')].map(el => el.dataset.username)
-            );
-            const newUsers = (data.users || []).filter(u => !existingNames.has(u.username));
+            const users = data.users || [];
 
-            if (newUsers.length === 0) {
+            if (users.length === 0) {
                 userSearchResults.style.display = 'none';
                 userSearchResults.innerHTML = '';
                 return;
             }
             userSearchResults.innerHTML = '';
-            newUsers.forEach(u => {
+            users.forEach(u => {
+                const status = u.friendship_status || getFriendStatus(u.username);
                 const item       = document.createElement('div');
-                item.className   = 'search-result-item';
-                item.innerHTML   = `<div class="search-result-avatar">${u.username.charAt(0).toUpperCase()}</div><span>${escapeHtml(u.username)}</span>`;
-                item.addEventListener('click', () => {
-                    userSearchResults.style.display = 'none';
-                    userSearchResults.innerHTML     = '';
-                    if (searchInput) searchInput.value = '';
-                    document.querySelectorAll('.contact-item').forEach(el => el.style.display = 'flex');
-                    openChatWith(u.username);
+                item.className   = 'search-result-item friend-search-result';
+                const buttonLabel = status === 'friends' ? 'Chat' : status === 'incoming' ? 'Accept' : status === 'outgoing' ? 'Pending' : 'Add';
+                item.innerHTML   = `
+                    <div class="search-result-avatar">${u.username.charAt(0).toUpperCase()}</div>
+                    <span>${escapeHtml(u.username)}</span>
+                    <button class="friend-action-btn" ${status === 'outgoing' ? 'disabled' : ''}>${buttonLabel}</button>`;
+                item.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    if (status === 'friends') {
+                        userSearchResults.style.display = 'none';
+                        userSearchResults.innerHTML     = '';
+                        if (searchInput) searchInput.value = '';
+                        document.querySelectorAll('.contact-item').forEach(el => el.style.display = 'flex');
+                        openChatWith(u.username);
+                    } else if (status === 'incoming') {
+                        answerFriendRequest(u.username, 'accept');
+                    } else if (status === 'none') {
+                        sendFriendRequest(u.username);
+                    }
                 });
                 userSearchResults.appendChild(item);
             });
@@ -889,22 +1155,7 @@ function initChat() {
 
     function renderContacts() {
         contactsListDiv.innerHTML = '';
-        const allNames   = new Set();
-        const contactMap = {};
 
-        dbContacts.forEach(c => {
-            allNames.add(c.username);
-            contactMap[c.username] = { lastMessage: c.last_message, lastTime: c.last_time, isOnline: false };
-        });
-
-        onlineUsers.forEach(u => {
-            if (u === currentUsername) return;
-            allNames.add(u);
-            if (contactMap[u]) contactMap[u].isOnline = true;
-            else contactMap[u] = { lastMessage: '', lastTime: '', isOnline: true };
-        });
-
-        // If not logged in, show a clear prompt and redirect to the map login immediately
         if (!isLoggedIn) {
             contactsListDiv.innerHTML = `
                 <div class="contact-placeholder">
@@ -912,34 +1163,60 @@ function initChat() {
                     <strong style="color:#e9d5ff;font-size:13px;">You're not logged in</strong>
                     <p style="margin-top:6px;font-size:12px;line-height:1.6;color:#949ba4;">Redirecting you to the<br>login page…</p>
                 </div>`;
-            // Small delay so the user sees the message, then go to the map which shows login
             setTimeout(() => { window.location.href = '/map?login=1'; }, 1200);
             return;
         }
 
-        if (allNames.size === 0) {
-            contactsListDiv.innerHTML = '<div class="contact-placeholder">No chats yet search for a player above</div>';
+        if (activeChatTab === 'requests') { renderRequestInbox(); return; }
+
+        const rows = [];
+        if (activeChatTab === 'friends') {
+            friendsList.forEach(f => rows.push({
+                username: f.username,
+                lastMessage: f.online || onlineUsers.has(f.username) ? 'Online' : 'Offline',
+                lastTime: '',
+                isOnline: f.online || onlineUsers.has(f.username),
+                avatarSeed: f.avatar_seed || f.username,
+                unreadCount: Number(f.unread_count || 0)
+            }));
+        } else {
+            dbContacts.forEach(c => rows.push({
+                username: c.username,
+                lastMessage: c.last_message || 'No messages yet',
+                lastTime: c.last_time || '',
+                isOnline: c.online || onlineUsers.has(c.username),
+                avatarSeed: c.avatar_seed || c.username,
+                unreadCount: Number(c.unread_count || 0)
+            }));
+        }
+
+        if (!rows.length) {
+            contactsListDiv.innerHTML = activeChatTab === 'friends'
+                ? '<div class="contact-placeholder">No friends yet — search for a player above</div>'
+                : '<div class="contact-placeholder">No inbox messages yet</div>';
             return;
         }
 
-        [...allNames].forEach(username => {
-            const info     = contactMap[username] || {};
+        rows.sort((a, b) => Number(b.unreadCount || 0) - Number(a.unreadCount || 0) || Number(b.isOnline) - Number(a.isOnline) || a.username.localeCompare(b.username));
+        rows.forEach(info => {
+            const username = info.username;
             const isActive = currentChatPartner === username;
-
-            let statusLabel;
-            if (info.isOnline) statusLabel = '🟢 Online';
-            else if (info.lastTime) statusLabel = `Last msg ${info.lastTime}`;
-            else                    statusLabel = '⚫ Offline';
-
-            const div             = document.createElement('div');
-            div.className         = `contact-item ${isActive ? 'active' : ''}`;
-            div.dataset.username  = username;
-            div.innerHTML         = `
-                <div class="contact-avatar">${username.charAt(0).toUpperCase()}</div>
+            const statusLabel = info.isOnline ? '🟢 Online' : (activeChatTab === 'friends' ? '⚫ Offline' : (info.lastTime ? `Last msg ${info.lastTime}` : '⚫ Offline'));
+            const div = document.createElement('div');
+            div.className = `contact-item ${isActive ? 'active' : ''} ${info.unreadCount ? 'has-unread' : ''}`;
+            div.dataset.username = username;
+            div.innerHTML = `
+                <img class="contact-avatar-img" src="${avatarUrl(info.avatarSeed)}" alt="${escapeHtml(username)}">
                 <div class="contact-info">
-                    <div class="contact-name">${escapeHtml(username)}</div>
+                    <div class="contact-name-row">
+                        <div class="contact-name">${escapeHtml(username)}</div>
+                        ${info.unreadCount ? `<span class="unread-badge">${info.unreadCount > 9 ? '9+' : info.unreadCount}</span>` : ''}
+                    </div>
                     <div class="contact-status ${info.isOnline ? 'online' : ''}">${statusLabel}</div>
-                </div>`;
+                </div>
+                ${activeChatTab === 'friends' ? `<button class="friend-remove-btn" title="Remove friend">Remove</button>` : ''}`;
+            const removeBtn = div.querySelector('.friend-remove-btn');
+            if (removeBtn) removeBtn.addEventListener('click', (e) => { e.stopPropagation(); removeFriend(username); });
             div.addEventListener('click', () => {
                 document.querySelectorAll('.contact-item').forEach(el => el.classList.remove('active'));
                 div.classList.add('active');
@@ -948,6 +1225,7 @@ function initChat() {
             contactsListDiv.appendChild(div);
         });
     }
+
 
     //  Open conversation 
 
@@ -963,12 +1241,13 @@ function initChat() {
         });
         messagesDiv.innerHTML = '<div class="placeholder-message">Loading…</div>';
         await loadChatHistory(username);
+        await markChatRead(username);
         renderMessages(username);
         messageInput.disabled = false;
         sendBtn.disabled      = false;
         messageInput.focus();
         showConversationPanel(); // mobile: slide conversation into view
-        if (isLoggedIn) await loadContactsFromDB(); // refresh so new chat appears in sidebar
+        if (isLoggedIn) { await loadFriends(); await loadContactsFromDB(); } // refresh sidebar
 
         // Update the status shown under the partner name in the conversation header
         updatePartnerStatus(username);
@@ -1005,7 +1284,11 @@ function initChat() {
         if (!messagesHistory[partner]) messagesHistory[partner] = [];
         const msg = { from, to, text, time: getTime() };
         messagesHistory[partner].push(msg);
-        if (currentChatPartner === partner) { removeTypingIndicator(); appendMessageBubble(msg); }
+        if (currentChatPartner === partner) {
+            removeTypingIndicator();
+            appendMessageBubble(msg);
+            if (from !== currentUsername && from !== 'You') markChatRead(partner);
+        }
     }
 
     //  Typing indicator 
@@ -1071,7 +1354,12 @@ function initChat() {
 
             removeTypingIndicator();
             addMessageLocally(from, currentUsername, data.message);
-            if (!onlineUsers.has(from)) { onlineUsers.add(from); loadContactsFromDB(); }
+            if (currentChatPartner !== from) {
+                const contact = dbContacts.find(c => c.username === from);
+                setLocalUnread(from, Number(contact?.unread_count || 0) + 1);
+            }
+            onlineUsers.add(from);
+            refreshLiveChatState();
         };
 
         chatSocket.onclose = () => {
@@ -1108,6 +1396,7 @@ function initChat() {
         addMessageLocally(currentUsername, currentChatPartner, text);
         if (chatSocket && chatSocket.readyState === WebSocket.OPEN)
             chatSocket.send(JSON.stringify({ to: currentChatPartner, type: 'message', message: text }));
+        refreshLiveChatState();
     }
 
     //  Partner status in conversation header 
@@ -1116,17 +1405,56 @@ function initChat() {
     function updatePartnerStatus(username) {
         const statusEl = document.getElementById('chatPartnerStatus');
         if (!statusEl) return;
-        if (onlineUsers.has(username)) {
+        const contact = dbContacts.find(c => c.username === username);
+        const friend = friendsList.find(f => f.username === username);
+        if (onlineUsers.has(username) || contact?.online || friend?.online) {
             statusEl.textContent = '🟢 Online';
             statusEl.style.color = '#39d98a';
         } else {
-            const contact = dbContacts.find(c => c.username === username);
-            statusEl.textContent = contact?.last_time ? `Last seen ${contact.last_time}` : 'Offline';
+            statusEl.textContent = contact?.last_time ? `Last seen ${contact.last_time}` : '⚫ Offline';
             statusEl.style.color = '#6c6f78';
         }
     }
 
     //  Event listeners 
+
+    addFriendToggle?.addEventListener('click', () => {
+        const opening = addFriendBox?.style.display === 'none';
+        if (addFriendBox) addFriendBox.style.display = opening ? 'block' : 'none';
+        if (opening) {
+            activeChatTab = 'requests';
+            chatTabs.forEach(b => b.classList.toggle('active', b.dataset.chatTab === activeChatTab));
+            renderContacts();
+            setTimeout(() => addFriendInput?.focus(), 0);
+        }
+    });
+
+    addFriendSubmit?.addEventListener('click', submitAddFriend);
+    addFriendInput?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') submitAddFriend();
+        if (e.key === 'Escape' && addFriendBox) addFriendBox.style.display = 'none';
+    });
+
+    chatTabs.forEach(btn => btn.addEventListener('click', () => {
+        activeChatTab = btn.dataset.chatTab || 'inbox';
+        chatTabs.forEach(b => b.classList.toggle('active', b === btn));
+        if (searchInput) searchInput.value = '';
+        if (userSearchResults) { userSearchResults.style.display = 'none'; userSearchResults.innerHTML = ''; }
+        renderContacts();
+    }));
+
+    contactsListDiv.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        e.stopPropagation();
+        answerFriendRequest(btn.dataset.username, btn.dataset.action);
+    });
+
+    friendRequestsPanel?.addEventListener('click', (e) => {
+        const btn = e.target.closest('button[data-action]');
+        if (!btn) return;
+        answerFriendRequest(btn.dataset.username, btn.dataset.action);
+    });
 
     sendBtn.addEventListener('click', sendMessage);
     messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter' && !messageInput.disabled) sendMessage(); });

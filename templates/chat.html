@@ -60,9 +60,25 @@
             >
           </div>
 
+          <button type="button" id="addFriendToggle" class="add-friend-toggle">+ Add a friend</button>
+
+          <div id="addFriendBox" class="add-friend-box" style="display:none;">
+            <input type="text" id="addFriendInput" placeholder="Enter username" autocomplete="off">
+            <button type="button" id="addFriendSubmit">Send request</button>
+            <div id="addFriendMsg" class="add-friend-msg"></div>
+          </div>
+
           <!-- Dropdown for DB user search results.
                Hidden by default; app.js shows it when the search finds new users. -->
           <div id="userSearchResults" class="user-search-results" style="display:none;"></div>
+
+          <div class="chat-nav-tabs">
+            <button class="chat-tab active" data-chat-tab="inbox">Inbox <span id="inboxBadge" class="request-badge" style="display:none;"></span></button>
+            <button class="chat-tab" data-chat-tab="friends">Friends</button>
+            <button class="chat-tab" data-chat-tab="requests">Requests <span id="requestBadge" class="request-badge" style="display:none;"></span></button>
+          </div>
+
+          <div id="friendRequestsPanel" class="friend-requests-panel" style="display:none;"></div>
         </div>
 
         <div class="contacts-list" id="contactsList">
