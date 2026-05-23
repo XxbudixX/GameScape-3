@@ -39,6 +39,14 @@ function setDemoVisible(val) {
     if (demo) demo.mapVisible = val;
     renderMapMarkers(getVisiblePlayers());
     refreshEventMarkers();
+    if (isLoggedIn) {
+        fetch('/api/visibility', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ visible: val })
+        }).then(loadLivePlayers).catch(() => {});
+    }
 }
 // Apply persisted visibility on load
 PLAYERS.find(p => p.isDemo).mapVisible = getDemoVisible();
@@ -48,6 +56,150 @@ window.setDemoVisible = setDemoVisible;
 
 function getVisiblePlayers() {
     return PLAYERS.filter(p => p.mapVisible);
+}
+
+function mapFriendButtonText(status) {
+    if (status === 'friends') return '💬 Chat';
+    if (status === 'incoming') return '✓ Accept Friend';
+    if (status === 'outgoing') return 'Pending Request';
+    return '+ Add Friend';
+}
+
+function mapFriendActionsHtml(player) {
+    const status = player.friendship_status;
+    if (!status || status === 'self') return '';
+    if (status === 'friends') {
+        return `
+            <div class="mini-profile-actions">
+                <button class="mini-profile-btn" onclick="window._mapFriendAction('${player.gamertag}', 'friends')">💬 Chat</button>
+                <button class="mini-profile-btn muted" onclick="window._mapFriendAction('${player.gamertag}', 'remove')">Remove Friend</button>
+            </div>`;
+    }
+    if (status === 'incoming') {
+        return `
+            <div class="mini-profile-actions">
+                <button class="mini-profile-btn" onclick="window._mapFriendAction('${player.gamertag}', 'incoming')">✓ Accept</button>
+                <button class="mini-profile-btn muted" onclick="window._mapFriendAction('${player.gamertag}', 'ignore')">Ignore</button>
+            </div>`;
+    }
+    return `<button class="mini-profile-btn" onclick="window._mapFriendAction('${player.gamertag}', '${status}')">${mapFriendButtonText(status)}</button>`;
+}
+
+window._mapFriendAction = async function(username, status) {
+    if (!isLoggedIn) { openModalPage('/login'); return; }
+    if (status === 'friends') { window.location.href = '/chat'; return; }
+    if (status === 'outgoing') return;
+    const url = status === 'incoming' ? '/api/friends/accept'
+              : status === 'ignore'   ? '/api/friends/ignore'
+              : status === 'remove'   ? `/api/friends/${encodeURIComponent(username)}`
+              : '/api/friends/request';
+    try {
+        const res = await fetch(url, {
+            method: status === 'remove' ? 'DELETE' : 'POST',
+            headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+            body: status === 'remove' ? undefined : JSON.stringify({ username })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) throw new Error(data.error || 'Friend action failed');
+        await loadLivePlayers();
+        closeAllPopups();
+        closePlayerModalSafe();
+    } catch (e) { console.warn('Friend action failed:', e); }
+};
+
+function liveOffset(id) {
+    return { lng: ((id % 7) - 3) * 0.00010, lat: ((id % 5) - 2) * 0.00010 };
+}
+
+function mergeLivePlayers(serverPlayers) {
+    // Remove previous live markers, keep the old demo/sample markers.
+    for (let i = PLAYERS.length - 1; i >= 0; i--) {
+        if (PLAYERS[i].isLive) {
+            const old = playerMarkers[PLAYERS[i].id];
+            if (old) { old.marker.remove(); delete playerMarkers[PLAYERS[i].id]; }
+            PLAYERS.splice(i, 1);
+        }
+    }
+    livePlayerIds = new Set();
+    const demo = PLAYERS.find(p => p.isDemo);
+    serverPlayers.forEach(p => {
+        const o = liveOffset(p.id);
+        livePlayerIds.add(p.id);
+
+        // Keep the logged-in user's own profile marker visible instead of replacing
+        // it with a hidden live marker. This fixes the disappearing self-profile.
+        if (p.isSelf && demo) {
+            demo.gamertag = p.gamertag;
+            demo.games = (p.games || []).map(g => g.name || g);
+            demo.status = p.status || 'active';
+            demo.lng = p.lng + o.lng;
+            demo.lat = p.lat + o.lat;
+            demo.lastActive = p.lastActive || 'Just now';
+            demo.age = p.age || '—';
+            demo.location = 'live';
+            demo.avatarSeed = p.avatarSeed || p.gamertag;
+            demo.mapVisible = getDemoVisible();
+            demo.friendship_status = 'self';
+            return;
+        }
+
+        PLAYERS.push({
+            id: 100000 + p.id,
+            userId: p.id,
+            gamertag: p.gamertag,
+            games: (p.games || []).map(g => g.name || g),
+            rank: 'Player',
+            status: p.status || 'offline',
+            lng: p.lng + o.lng,
+            lat: p.lat + o.lat,
+            lastActive: p.lastActive || 'Unknown',
+            age: p.age || '—',
+            location: 'live',
+            avatarSeed: p.avatarSeed || p.gamertag,
+            mapVisible: true,
+            isLive: true,
+            friendship_status: p.friendship_status || 'none'
+        });
+    });
+    renderMapMarkers(getVisiblePlayers());
+}
+
+async function loadLivePlayers() {
+    try {
+        const res = await fetch('/api/players', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (data.success) mergeLivePlayers(data.players || []);
+    } catch (e) { console.warn('Could not load live players:', e); }
+}
+
+function sendPresence(lat, lng) {
+    return fetch('/api/presence', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+        body: JSON.stringify({ lat, lng })
+    }).catch(() => {});
+}
+
+function startRealtimePresence() {
+    if (!isLoggedIn || presenceStarted) return;
+    presenceStarted = true;
+    const fallback = () => {
+        // Malmö fallback keeps local dev/test users visible even if location permission is denied.
+        const seed = [...(currentUsername || 'user')].reduce((a, c) => a + c.charCodeAt(0), 0);
+        const lat = 55.605 + ((seed % 9) - 4) * 0.00035;
+        const lng = 13.008 + (((seed / 3) | 0) % 9 - 4) * 0.00035;
+        sendPresence(lat, lng).then(loadLivePlayers);
+    };
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            pos => sendPresence(pos.coords.latitude, pos.coords.longitude).then(loadLivePlayers),
+            fallback,
+            { enableHighAccuracy: true, timeout: 2500, maximumAge: 10000 }
+        );
+        navigator.geolocation.watchPosition(pos => sendPresence(pos.coords.latitude, pos.coords.longitude), () => {}, { maximumAge: 5000 });
+    } else fallback();
+    loadLivePlayers();
+    setInterval(loadLivePlayers, 3000);
+    setInterval(() => sendPresence(), 10000);
 }
 
 
@@ -69,6 +221,8 @@ map.addControl(new maplibregl.NavigationControl({
 let isLoggedIn      = false;
 let currentUsername = null;
 let currentAvatarSeed = null;
+let presenceStarted = false;
+let livePlayerIds = new Set();
 
 function dicebearAvatar(seed) {
     return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
@@ -100,6 +254,7 @@ function setLoggedIn(status, username, avatarSeed) {
         const demo = PLAYERS.find(p => p.isDemo);
         if (demo) { demo.gamertag = username; demo.avatarSeed = currentAvatarSeed; refreshPlayerAvatar(demo); }
         renderMapMarkers(getVisiblePlayers());
+        startRealtimePresence();
     }
 }
 
@@ -313,7 +468,7 @@ function openPlayerModal(player) {
 
     const statusText  = { active: 'Active now', recent: `Active ${player.lastActive}`, offline: 'Offline' }[player.status];
     const statusColor = { active: '#39d98a', recent: '#f5a623', offline: '#6c6f78' }[player.status];
-    const gameTags    = player.games.map(g => `<span class="modal-game-tag">${g}</span>`).join('');
+    const gameTags    = (player.games || []).map(g => `<span class="modal-game-tag">${typeof g === 'string' ? g : g.name}</span>`).join('');
 
     box.innerHTML = `
         <div class="player-modal">
@@ -328,8 +483,8 @@ function openPlayerModal(player) {
             </div>
             <div class="player-section"><div class="section-label">Games</div><div class="player-games">${gameTags}</div></div>
             <div class="player-section"><div class="section-label">Rank</div><div>${player.rank}</div></div>
-            <div class="player-section"><div class="section-label">Age</div><div>${player.age}</div></div>
-            <button class="modal-chat-btn" onclick="window.location.href='/chat'">💬 Start Chat</button>
+            <div class="player-section"><div class="section-label">Age</div><div>${player.age || '—'}</div></div>
+            ${mapFriendActionsHtml(player).replaceAll('mini-profile-btn', 'modal-chat-btn')}
         </div>`;
 
     // Inject styles once prevents duplicating the <style> tag on repeat opens
@@ -410,7 +565,7 @@ function showMiniProfile(player) {
 
     const statusColor = { active: '#39d98a', recent: '#f5a623', offline: '#6c6f78' }[player.status] || '#6c6f78';
     const statusLabel = { active: 'Active now', recent: `Active ${player.lastActive}`, offline: 'Offline' }[player.status];
-    const gamesStr    = (player.games || []).join(' · ');
+    const gamesStr    = (player.games || []).map(g => typeof g === 'string' ? g : g.name).join(' · ');
     const avatarSrc   = dicebearAvatar(player.avatarSeed || player.gamertag);
 
     activeMiniPopup = new maplibregl.Popup({
@@ -437,6 +592,7 @@ function showMiniProfile(player) {
                 </div>
                 <div class="mini-profile-divider"></div>
                 <div class="mini-profile-games">${gamesStr}</div>
+                ${mapFriendActionsHtml(player)}
                 <button class="mini-profile-btn" onclick="window._openFullProfile(${player.id})">View Full Profile</button>
             </div>`)
         .addClassName('mini-profile-popup')
@@ -462,6 +618,9 @@ function showMiniProfile(player) {
             .mini-profile-games{font-size:12px;color:#94a3b8;font-weight:500;}
             .mini-profile-btn{width:100%;background:#1d4ed8;border:none;color:#e0f2fe;padding:11px 14px;border-radius:6px;font-size:13px;font-weight:800;cursor:pointer;transition:all 0.2s;text-transform:uppercase;letter-spacing:1px;font-family:inherit;}
             .mini-profile-btn:hover{background:#2563eb;box-shadow:0 4px 14px rgba(37,99,235,0.5);}
+            .mini-profile-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
+            .mini-profile-btn.muted{background:rgba(148,163,184,.16);color:#cbd5e1;}
+            .mini-profile-btn.muted:hover{background:rgba(148,163,184,.26);box-shadow:none;}
             /* Shared event popup styles */
             .event-name-link{color:#f0f9ff;text-decoration:none;font-size:16px;font-weight:800;font-family:'Orbitron',sans-serif;transition:color 0.15s;}
             .event-name-link:hover{color:#39d98a;}
