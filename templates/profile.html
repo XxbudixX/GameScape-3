@@ -15,11 +15,12 @@
 
     <!--  AVATAR + NAME + ICONS  -->
     <div class="avatar-box">
-      <div class="avatar-circle">
+      <div class="avatar-circle" title="Pick avatar" onclick="toggleAvatarPicker()">
         <img id="profileAvatar"
              src="https://api.dicebear.com/7.x/avataaars/svg?seed=default"
              alt="Profile avatar" class="avatar-img">
       </div>
+      <div id="avatarPicker" class="avatar-picker" style="display:none;"></div>
       <h3 id="profileName">Loading...</h3>
 
       <div class="action-icons">
