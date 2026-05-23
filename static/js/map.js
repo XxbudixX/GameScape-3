@@ -933,7 +933,7 @@ function initEventSystem() {
         
         // Form overlay
         const overlay = document.createElement('div');
-        overlay.className = 'event-form-overlay';
+        overlay.className = 'event-form-overlay show';
         overlay.id = 'eventFormOverlay';
         overlay.innerHTML = `
             <div class="event-form-card">

@@ -359,7 +359,7 @@ def delete_event(event_id):
         return jsonify({'success': False, 'error': 'Unauthorized'}), 403
     conn, cur = connect_db()
     try:
-        cur.execute('DELETE FROM events WHERE id = %s', (event_id,))
+        cur.execute('DELETE FROM event WHERE event_id = %s', (event_id,))
         conn.commit()
         return jsonify({'success': True})
     finally:
@@ -404,7 +404,7 @@ def add_game():
 def get_events():
     conn, cur = connect_db()
     try:
-        cur.execute("SELECT id, title FROM events")
+        cur.execute("SELECT event_id, title FROM event")
         rows   = cur.fetchall()
         events = [{'id': r[0], 'title': r[1]} for r in rows]
         return jsonify({'events': events})
