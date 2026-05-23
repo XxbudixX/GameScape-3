@@ -247,7 +247,7 @@ window.createEvent = async function(eventData) {
         headers: {
             'Content-Type': 'application/json'
         },
-        credentials: 'include',
+        credentials: 'same-origin',
         body: JSON.stringify(eventData)
     });
 
