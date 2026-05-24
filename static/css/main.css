@@ -304,7 +304,7 @@ body.chat-page::before {
 /*
    MODAL PAGES  (login / register / profile)
    Transparent body card floats over blurred map behind iframe */
-body.modal-page { background: transparent; min-width: 0; height: 100%; overflow: auto; display: flex; align-items: center; justify-content: center; padding: 20px; }
+body.modal-page { background: transparent; min-width: 0; height: 100%; overflow: hidden; display: flex; align-items: center; justify-content: center; padding: 20px; }
 body.modal-page::before { display: none; }
 
 .login-container, .register-container, .profile-container {
@@ -316,7 +316,7 @@ body.modal-page::before { display: none; }
 }
 .login-container    { height: 600px; padding: 40px 30px 45px; }
 .register-container { height: 670px; padding: 30px 28px 35px; }
-.profile-container  { height: 760px; padding: 26px 26px 28px; max-height: 94vh;  display: flex; flex-direction: column; }
+.profile-container  { height: 760px; padding: 26px 26px 28px; max-height: 94vh;  display: flex; flex-direction: column; overflow: hidden; }
 
 /* Sweeping neon border background-size:200% lets the position animation
    travel far enough to cover the full element width */
@@ -332,6 +332,10 @@ body.modal-page::before { display: none; }
   border-radius: 26px; z-index: -1; pointer-events: none;
 }
 @keyframes neon-sweep { 0%{background-position:100% 0} 100%{background-position:-100% 0} }
+.profile-container::-webkit-scrollbar { display: none; }
+.profile-scroll-inner { flex: 1; overflow-y: auto; min-height: 0; scrollbar-width: none; }
+.profile-scroll-inner::-webkit-scrollbar { display: none; }
+
 
 .close-btn { position: absolute; top: 15px; right: 15px; background: rgba(30,31,34,0.6); backdrop-filter: blur(8px); border: 1px solid rgba(155,89,182,0.4); color: #c084fc; font-size: 16px; cursor: pointer; width: 30px; height: 30px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s; z-index: 10; }
 .close-btn:hover { background: rgba(155,89,182,0.2); border-color: rgba(155,89,182,0.8); box-shadow: 0 0 12px rgba(155,89,182,0.3); }
@@ -863,7 +867,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
 /* Online status colour for contacts */
 .contact-status.online { color: #39d98a; }
 
-/* ── Unified search bar (replaces old .search-box) ── */
+/*  Unified search bar (replaces old .search-box)  */
 .search-wrap { position: relative; }
 
 .search-icon {
@@ -886,7 +890,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
 #searchInput:focus { border-color: #c084fc; box-shadow: 0 0 8px rgba(155,89,182,0.25); }
 #searchInput::placeholder { color: #6c6f78; }
 
-/* ── User search dropdown (new users not yet in contacts) ── */
+/*  User search dropdown (new users not yet in contacts)  */
 .user-search-results {
   position: absolute;
   left: 12px; right: 12px;
@@ -914,7 +918,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
   font-size: 12px; font-weight: bold; color: white; flex-shrink: 0;
 }
 
-/* ── Typing indicator ── */
+/*  Typing indicator  */
 .typing-indicator {
   display: flex; align-items: center; gap: 8px;
   padding: 7px 13px; border-radius: 18px;
@@ -937,7 +941,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
 }
 .typing-label { font-size: 11px; color: #808090; font-style: italic; white-space: nowrap; }
 
-/* ── Mobile-only back arrow (hidden on desktop) ── */
+/*  Mobile-only back arrow (hidden on desktop)  */
 .mobile-back-btn {
   display: none;
   background: rgba(30,31,34,0.5);
@@ -949,7 +953,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
 }
 .mobile-back-btn:hover { background: rgba(155,89,182,0.2); }
 
-/* ── Mobile panel switching ── */
+/*  Mobile panel switching  */
 @media (max-width: 640px) {
   body.chat-page { min-width: 0; }
 
@@ -992,7 +996,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
 }
 
 
-/* ── event-pulse keyframe ────────────────────────────────────────────────
+/*  event-pulse keyframe 
    Referenced by .pulse-ring animation injected into avatar
    markers by map.js refreshEventMarkers(). Starts compact and expands
    to 3× diameter while fading out the "radio wave" effect. */
@@ -1108,7 +1112,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
 }
 
 
-/* ── Conversation header: name + status stacked ─────────────────────────
+/*  Conversation header: name + status stacked 
    .user-name-block wraps the username and the partner status on two lines. */
 .user-name-block {
   display: flex;
@@ -1116,7 +1120,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
   gap: 2px;
 }
 
-/* Status line under the partner name "🟢 Online" or "Last seen HH:MM" */
+/* Status line under the partner name " Online" or "Last seen HH:MM" */
 .partner-status {
   font-size: 11px;
   color: #6c6f78;
@@ -1125,7 +1129,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
 }
 
 
-/* ── Profile logout button ───────────────────────────────────────────────
+/*  Profile logout button 
    Always visible at the bottom of the profile card, below the Save button.
    Muted red tint to signal a destructive action, but kept subtle. */
 .logout-btn {
@@ -1355,27 +1359,7 @@ body.chat-page .message { animation: msg-pop 0.16s ease; }
 }
 .contact-popup-copy:hover  { background: rgba(57,217,138,0.28); }
 .contact-popup-copy.copied { background: linear-gradient(135deg,#39d98a,#059669); color:#051a0e; border-color:transparent; }
-
-
-
-.event-add-btn{
-  position: absolute;
-  right: 16px;
-  bottom: 16px;
-  z-index: 9999;
-  pointer-events: auto;
-}
-
-.event-form-overlay{
-  position: fixed;
-  inset: 0;
-  z-index: 99999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0,0,0,0.55);
-}
-
+/* Friends UI additions */
 .add-friend-toggle{width:100%;margin:10px 0 8px;padding:10px 12px;border-radius:12px;border:1px solid rgba(155,89,182,.35);background:rgba(155,89,182,.18);color:#e9d5ff;font-weight:800;cursor:pointer;}
 .add-friend-box{background:rgba(30,31,34,.55);border:1px solid rgba(155,89,182,.25);border-radius:14px;padding:10px;margin-bottom:10px;}
 .add-friend-box input{width:100%;box-sizing:border-box;margin-bottom:8px;padding:9px 10px;border-radius:10px;border:1px solid rgba(155,89,182,.3);background:rgba(14,15,18,.7);color:#dbdee1;}
