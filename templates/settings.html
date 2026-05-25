@@ -1,0 +1,415 @@
+<!-- GameScape settings page — drop into templates/settings.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>GameScape - Settings</title>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+</head>
+<body style="margin:0;padding:0;height:100%;overflow:hidden;min-width:0;background:#07070c;">
+
+<div class="gs-wrap">
+
+  <nav class="navbar">
+    <div class="navbar-left" id="settingsBackBtn" style="cursor:pointer;">
+      <i class="ti ti-arrow-left" aria-hidden="true"></i> Back
+    </div>
+    <div class="navbar-logo">GAME<span class="logo-accent">SCAPE</span></div>
+    <div class="navbar-right">
+      <div class="profile-pic" id="profilePic">
+        <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=GameScape" alt="Profile" class="avatar-img">
+      </div>
+    </div>
+  </nav>
+
+  <div class="gs-body">
+
+    <div class="gs-sidebar">
+      <div class="gs-page-title">Settings</div>
+      <div class="gs-nav-item active" data-section="section-account">      <i class="ti ti-user"       aria-hidden="true"></i> Account</div>
+      <div class="gs-nav-item"        data-section="section-privacy">      <i class="ti ti-shield"     aria-hidden="true"></i> Privacy</div>
+      <div class="gs-nav-item"        data-section="section-notifications"><i class="ti ti-bell"       aria-hidden="true"></i> Notifications</div>
+      <div class="gs-nav-item"        data-section="section-map">          <i class="ti ti-map-pin"    aria-hidden="true"></i> Map &amp; Discovery</div>
+      <div class="gs-nav-item"        data-section="section-connections">  <i class="ti ti-link"       aria-hidden="true"></i> Connections</div>
+      <div class="gs-nav-item"        data-section="section-appearance">   <i class="ti ti-palette"    aria-hidden="true"></i> Appearance</div>
+      <div class="gs-nav-sep"></div>
+      <div class="gs-nav-item danger" id="deleteAccountBtn">               <i class="ti ti-trash"      aria-hidden="true"></i> Delete Account</div>
+    </div>
+
+    <div class="gs-content">
+
+      <!-- ACCOUNT -->
+      <div class="gs-section-title" id="section-account">Account</div>
+      <div class="gs-card">
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-user-circle" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Username</span><span class="gs-row-sub" id="display-username">—</span></div>
+          </div>
+          <span class="gs-chip">Edit</span>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-mail" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Email</span><span class="gs-row-sub" id="display-email">—</span></div>
+          </div>
+          <span class="gs-chip">Edit</span>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-lock" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Password</span><span class="gs-row-sub">Change your password</span></div>
+          </div>
+          <span class="gs-chip">Change</span>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-photo" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Avatar style</span><span class="gs-row-sub">avataaars · seed: <span id="display-avatar-seed">—</span></span></div>
+          </div>
+          <span class="gs-chip">Randomise</span>
+        </div>
+      </div>
+
+      <div class="gs-neon-line"></div>
+
+      <!-- PRIVACY -->
+      <div class="gs-section-title" id="section-privacy">Privacy</div>
+      <div class="gs-card">
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-eye" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Visible on map</span><span class="gs-row-sub">Show your pin to other players</span></div>
+          </div>
+          <div class="gs-toggle on" id="toggle-map-visible"></div>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-users" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Who can message me</span><span class="gs-row-sub">Direct messages</span></div>
+          </div>
+          <select class="gs-select" id="select-msg-permission">
+            <option value="everyone">Everyone</option>
+            <option value="friends">Friends only</option>
+            <option value="nobody">No one</option>
+          </select>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-id" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Public profile</span><span class="gs-row-sub">Anyone can view your profile page</span></div>
+          </div>
+          <div class="gs-toggle on" id="toggle-public-profile"></div>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-activity" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Show online status</span><span class="gs-row-sub">Display active/away badge</span></div>
+          </div>
+          <div class="gs-toggle" id="toggle-show-status"></div>
+        </div>
+      </div>
+
+      <div class="gs-neon-line"></div>
+
+      <!-- NOTIFICATIONS -->
+      <div class="gs-section-title" id="section-notifications">Notifications</div>
+      <div class="gs-card">
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-message" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">New messages</span><span class="gs-row-sub">Push alert on new chat</span></div>
+          </div>
+          <div class="gs-toggle on" id="toggle-notif-messages"></div>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-user-plus" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Friend requests</span><span class="gs-row-sub">When someone adds you</span></div>
+          </div>
+          <div class="gs-toggle on" id="toggle-notif-friends"></div>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-calendar-event" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Gaming events nearby</span><span class="gs-row-sub">Events within your radius</span></div>
+          </div>
+          <div class="gs-toggle on" id="toggle-notif-events"></div>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-speakerphone" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">GameScape announcements</span><span class="gs-row-sub">Platform news &amp; updates</span></div>
+          </div>
+          <div class="gs-toggle on" id="toggle-notif-announce"></div>
+        </div>
+      </div>
+
+      <div class="gs-neon-line"></div>
+
+      <!-- MAP & DISCOVERY -->
+      <div class="gs-section-title" id="section-map">Map &amp; Discovery</div>
+      <div class="gs-card">
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-radar" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Search radius</span><span class="gs-row-sub">How far to show other players</span></div>
+          </div>
+          <div class="gs-slider-wrap">
+            <input class="gs-slider" type="range" min="1" max="100" value="25" id="rad">
+            <span class="gs-slider-val" id="radVal">25 km</span>
+          </div>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-pulse" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Active players only</span><span class="gs-row-sub">Hide offline users from map</span></div>
+          </div>
+          <div class="gs-toggle" id="toggle-active-only"></div>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-current-location" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Location sharing</span><span class="gs-row-sub">Share live position</span></div>
+          </div>
+          <span class="gs-chip green">Active</span>
+        </div>
+      </div>
+
+      <div class="gs-neon-line"></div>
+
+      <!-- CONNECTIONS -->
+      <div class="gs-section-title" id="section-connections">Connections</div>
+      <div class="gs-card">
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-brand-discord" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Discord</span><span class="gs-row-sub" id="display-discord">Not connected</span></div>
+          </div>
+          <span class="gs-chip" id="chip-discord">Connect</span>
+        </div>
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-brand-steam" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Steam</span><span class="gs-row-sub" id="display-steam">Not connected</span></div>
+          </div>
+          <span class="gs-chip" id="chip-steam">Connect</span>
+        </div>
+      </div>
+
+      <div class="gs-neon-line"></div>
+
+      <!-- APPEARANCE -->
+      <div class="gs-section-title" id="section-appearance">Appearance</div>
+      <div class="gs-card">
+        <div class="gs-row">
+          <div class="gs-row-label">
+            <i class="ti ti-home" aria-hidden="true"></i>
+            <div class="gs-row-text"><span class="gs-row-name">Start page</span><span class="gs-row-sub">Land on hero page on launch</span></div>
+          </div>
+          <div class="gs-toggle on" id="toggle-start-hero"></div>
+        </div>
+      </div>
+
+    </div><!-- /gs-content -->
+  </div><!-- /gs-body -->
+</div><!-- /gs-wrap -->
+
+<!-- Save status toast -->
+<div id="settings-toast" style="
+  position:fixed;bottom:24px;right:24px;
+  background:rgba(30,58,138,0.92);color:#e0f2fe;
+  padding:10px 20px;border-radius:10px;
+  font-size:13px;font-weight:600;
+  border:1px solid rgba(96,165,250,0.4);
+  box-shadow:0 4px 24px rgba(0,0,0,0.5);
+  opacity:0;transition:opacity 0.3s;
+  pointer-events:none;z-index:9999;">
+  ✓ Saved
+</div>
+
+<script>
+
+//  Settings page script — fully self-contained, no app.js
+//  dependency. Works inside the iframe modal.
+
+
+const TOGGLE_MAP = {
+    'toggle-map-visible':    'map_visible',
+    'toggle-show-status':    'show_status',
+    'toggle-public-profile': 'public_profile',
+    'toggle-active-only':    'active_only',
+    'toggle-notif-messages': 'notif_messages',
+    'toggle-notif-friends':  'notif_friends',
+    'toggle-notif-events':   'notif_events',
+    'toggle-notif-announce': 'notif_announce',
+    'toggle-start-hero':     'start_hero',
+};
+
+let settings = {};
+
+//  Toast 
+function showToast() {
+    const t = document.getElementById('settings-toast');
+    if (!t) return;
+    t.style.opacity = '1';
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => { t.style.opacity = '0'; }, 1800);
+}
+
+//  Apply DB values to UI 
+function applyToUI(s) {
+    Object.entries(TOGGLE_MAP).forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('on', !!s[key]);
+    });
+
+    const sel = document.getElementById('select-msg-permission');
+    if (sel) sel.value = s.msg_permission || 'everyone';
+
+    const slider = document.getElementById('rad');
+    const label  = document.getElementById('radVal');
+    if (slider) slider.value      = s.search_radius || 25;
+    if (label)  label.textContent = `${s.search_radius || 25} km`;
+}
+
+//  Load settings from server 
+async function loadSettings() {
+    try {
+        const res  = await fetch('/api/settings', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!data.success) return;
+        settings = data;
+        applyToUI(data);
+    } catch (e) { console.warn('Settings load failed:', e); }
+}
+
+//  Load account display info 
+async function loadAccountDisplay() {
+    try {
+        const res  = await fetch('/api/me', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!data.logged_in) return;
+
+        const u = data.username;
+        const usernameEl = document.getElementById('display-username');
+        const seedEl     = document.getElementById('display-avatar-seed');
+        if (usernameEl) usernameEl.textContent = u;
+        if (seedEl)     seedEl.textContent     = u;
+
+        const avatarImg = document.querySelector('.avatar-img');
+        if (avatarImg) {
+            avatarImg.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(u)}`;
+        }
+
+        // Discord / Steam display
+        const profRes  = await fetch('/api/profile', { credentials: 'same-origin' });
+        const profData = await profRes.json();
+        if (profData.success) {
+            const discordEl = document.getElementById('display-discord');
+            const steamEl   = document.getElementById('display-steam');
+            const chipD     = document.getElementById('chip-discord');
+            const chipS     = document.getElementById('chip-steam');
+
+            if (profData.discord && discordEl) {
+                discordEl.textContent = profData.discord;
+                if (chipD) { chipD.textContent = 'Linked'; chipD.classList.add('green'); }
+            }
+            if (profData.steam_username && steamEl) {
+                steamEl.textContent = profData.steam_username;
+                if (chipS) { chipS.textContent = 'Linked'; chipS.classList.add('green'); }
+            }
+        }
+    } catch (e) { console.warn('Account display load failed:', e); }
+}
+
+//  Save settings to database 
+async function saveSettings() {
+    try {
+        const res  = await fetch('/api/settings', {
+            method:      'POST',
+            headers:     { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body:        JSON.stringify(settings),
+        });
+        const data = await res.json();
+        if (data.success) showToast();
+    } catch (e) { console.warn('Settings save failed:', e); }
+}
+
+//  Toggle clicks 
+document.addEventListener('click', (e) => {
+    const toggle = e.target.closest('.gs-toggle');
+    if (!toggle || !toggle.id) return;
+
+    const isOn = toggle.classList.toggle('on');
+    const key  = TOGGLE_MAP[toggle.id];
+    if (!key) return;
+
+    settings[key] = isOn;
+    saveSettings();
+
+    // Notify map page in real time for map visibility
+    if (key === 'map_visible' && window.parent && window.parent.setDemoVisible) {
+        window.parent.setDemoVisible(isOn);
+    }
+});
+
+// Select changes 
+document.addEventListener('change', (e) => {
+    if (e.target.id === 'select-msg-permission') {
+        settings.msg_permission = e.target.value;
+        saveSettings();
+    }
+});
+
+// Slider save on release 
+(function wireSlider() {
+    const slider = document.getElementById('rad');
+    const label  = document.getElementById('radVal');
+    if (!slider) return;
+    slider.addEventListener('input', () => {
+        if (label) label.textContent = `${slider.value} km`;
+        settings.search_radius = parseInt(slider.value, 10);
+    });
+    slider.addEventListener('change', () => {
+        settings.search_radius = parseInt(slider.value, 10);
+        saveSettings();
+    });
+})();
+
+// Sidebar nav & scrolling
+document.querySelectorAll('.gs-nav-item[data-section]').forEach(item => {
+    item.addEventListener('click', () => {
+        document.querySelectorAll('.gs-nav-item').forEach(i => i.classList.remove('active'));
+        item.classList.add('active');
+        const target = document.getElementById(item.dataset.section);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+});
+
+// Back button 
+document.getElementById('settingsBackBtn').addEventListener('click', () => {
+    if (window.parent && window.parent.closeModalPage) {
+        window.parent.closeModalPage();
+    } else {
+        history.back();
+    }
+});
+
+// Delete account (Placeholder)
+document.getElementById('deleteAccountBtn').addEventListener('click', () => {
+    if (confirm('Are you sure you want to delete your account? This cannot be undone.')) {
+        alert('Account deletion not yet implemented.');
+    }
+});
+
+// Boot 
+loadSettings();
+loadAccountDisplay();
+</script>
+
+</body>
+</html>
