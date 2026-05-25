@@ -413,9 +413,30 @@ def save_profile():
 @app.route('/create_event', methods=['POST'])
 def create_event():
     if 'user_id' not in session:
-        return jsonify({'error': "Inte inloggad"}),401
+        return jsonify({'error': 'Inte inloggad'}), 401
     try:
-        data = request.json
+        data          = request.json
+        title         = data.get('title')
+        datetime_value = data.get('datetime')
+        description   = data.get('description')
+        min_rank      = data.get('min_rank')
+        max_rank      = data.get('max_rank')
+        appid         = data.get('appid')
+
+        if not title or not appid or not datetime_value:
+            return jsonify({'error': 'Missing required fields'}), 400
+
+        conn, cur = connect_db()
+        cur.execute("""
+            INSERT INTO event (creator_id, appid, title, datetime, description, min_rank, max_rank)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (session['user_id'], appid, title, datetime_value, description, min_rank, max_rank))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'message': 'Event skapat'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500    
 
 #  Settings 
 @app.route('/api/settings', methods=['GET'])
@@ -548,7 +569,7 @@ def save_settings():
         conn.commit()
         cur.close()
         conn.close()
-
+    try:
         return jsonify({"message": "Event skapat"})
     except Exception as e:
         return jsonify({"error":str(e)}) , 500
