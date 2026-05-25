@@ -226,7 +226,6 @@ def logout():
 #  Players 
 
 @app.route('/api/players', methods=['GET'])
-@app.route('/api/players', methods=['GET'])
 def get_players():
     conn, cur = connect_db()
     if conn is None:
@@ -322,25 +321,23 @@ def get_profile():
         return jsonify({'success': False, 'error': 'Not logged in'}), 401
     conn, cur = connect_db()
     try:
-        # Ensure all profile columns exist (safe IF NOT EXISTS is a no-op if already present)
+        # Ensure all profile columns exist
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS about_me       TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS interests      TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord        TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_username TEXT")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed    TEXT")
         conn.commit()
 
-        # If a ?user=username query param is provided, load that user's profile,
-        # otherwise load the current logged-in user's profile.
         target_user = request.args.get('user')
         if target_user:
             cur.execute(
-                'SELECT user_id, username, about_me, interests, discord, steam_username FROM users WHERE username = %s',
+                'SELECT user_id, username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE username = %s',
                 (target_user,)
             )
         else:
             cur.execute(
-                'SELECT user_id, username, about_me, interests, discord, steam_username FROM users WHERE user_id = %s',
+                'SELECT user_id, username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE user_id = %s',
                 (session['user_id'],)
             )
         row = cur.fetchone()
@@ -349,13 +346,17 @@ def get_profile():
 
         row_user_id = row[0]
 
-        # If viewing another user's profile, respect their public_profile setting
+        # Respect public_profile setting when viewing another user
         viewing_other = target_user and target_user != session.get('username')
         if viewing_other:
             cur.execute("SELECT public_profile FROM users WHERE user_id = %s", (row_user_id,))
             priv = cur.fetchone()
             if priv and not priv[0]:
                 return jsonify({'success': False, 'error': 'This profile is private'}), 403
+
+        # Visibility (only relevant for own profile)
+        cur.execute('SELECT COALESCE(is_invisible, FALSE) FROM users WHERE user_id = %s', (row_user_id,))
+        visible_row = cur.fetchone()
 
         return jsonify({
             'success':        True,
@@ -364,23 +365,7 @@ def get_profile():
             'interests':      row[3] or '',
             'discord':        row[4] or '',
             'steam_username': row[5] or '',
-        cur.execute(
-            'SELECT username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE user_id = %s',
-            (session['user_id'],)
-        )
-        row = cur.fetchone()
-        ensure_presence_columns(cur)
-        cur.execute('SELECT COALESCE(is_invisible,FALSE) FROM users WHERE user_id = %s', (session['user_id'],))
-        visible_row = cur.fetchone()
-        conn.commit()
-        return jsonify({
-            'success':        True,
-            'username':       row[0],
-            'about_me':       row[1] or '',
-            'interests':      row[2] or '',
-            'discord':        row[3] or '',
-            'steam_username': row[4] or '',
-            'avatar_seed':    row[5] or row[0],
+            'avatar_seed':    row[6] or row[1],
             'visible':        not bool(visible_row[0]) if visible_row else True,
             'is_invisible':   bool(visible_row[0]) if visible_row else False,
         })
@@ -388,7 +373,6 @@ def get_profile():
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
-
 
 @app.route('/api/profile', methods=['POST'])
 def save_profile():
