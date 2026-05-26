@@ -265,7 +265,7 @@ map.on('load', () => {
 */
 
 map.on('load', () => {
-    renderMapMarkers(currentPlayersForMap());
+    renderMapMarkers(window.currentPlayersForMap());
 });
 
 map.on('error', (e) => {
@@ -1193,7 +1193,7 @@ function refreshEventMarkers() {
     Object.keys(pulseMarkers).forEach(k => delete pulseMarkers[k]);
 
     activeEvents.forEach(evt => {
-        const player     = PLAYERS.find(p => p.id === evt.playerId);
+        const player = window.currentPlayersForMap().find(p => p.id === evt.playerId);
         if (!player) return;
 
         const markerData = playerMarkers[player.id];
