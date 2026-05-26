@@ -766,12 +766,14 @@ if SOCK_AVAILABLE:
     @sock.route('/ws/map')
     def ws_map(ws):
         connected_map_clients.add(ws)
+        print("[WS map] sending snapshot")
         print("[WS map] client connected")
         try:
             ws.send(json.dumps({
                 'type': 'players_snapshot',
                 'players': fetch_players_for_map()
             }))
+            print("[WS map] snapshot sent")
             while True:
                 raw = ws.receive()
                 if raw is None:
@@ -780,6 +782,7 @@ if SOCK_AVAILABLE:
             print("[WS map] error:", e)
         finally:
             connected_map_clients.discard(ws)
-            print("[WS map] client disconnected")            
+            print("[WS map] client disconnected")     
+
 if __name__ == '__main__':
     app.run(debug=True)
