@@ -16,6 +16,7 @@ try:
 except ImportError:
     SOCK_AVAILABLE = False
     print("WARNING: flask_sock not installed. Run: pip install flask-sock")
+print("SOCK_AVAILABLE =", SOCK_AVAILABLE)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -785,4 +786,4 @@ if SOCK_AVAILABLE:
             print("[WS map] client disconnected")     
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, use_reloader=False)
