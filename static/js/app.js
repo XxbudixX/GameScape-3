@@ -747,7 +747,6 @@ function initChat() {
     //  State 
     let chatSocket         = null;
     let currentUsername    = null;
-    let currentUserAvatar  = '';
     let currentChatPartner = null;
     let onlineUsers        = new Set();
     let messagesHistory    = {};
@@ -804,8 +803,7 @@ function initChat() {
             const data = await res.json();
             if (data.logged_in) {
                 isLoggedIn      = true;
-                currentUsername   = data.username;
-                currentUserAvatar = data.avatar_seed || data.username;
+                currentUsername = data.username;
                 statusSpan.textContent = `Connected as ${data.username}`;
                 statusSpan.className   = 'status-online';
                 connectWebSocket(data.username);
@@ -897,7 +895,7 @@ function initChat() {
                 messagesHistory[partner] = data.messages.map(m => ({
                     from: m.from, to: m.from === currentUsername ? partner : currentUsername,
                     id: m.id, text: m.text, time: m.time, sent_at: m.sent_at,
-                    edited_at: m.edited_at, deleted: m.deleted, avatar_seed: m.from === currentUsername ? (m.avatar_seed || currentUserAvatar) : m.avatar_seed,
+                    edited_at: m.edited_at, deleted: m.deleted, avatar_seed: m.avatar_seed,
                     reply_to_id: m.reply_to_id, reply_from: m.reply_from, reply_text: m.reply_text
                 }));
             }
@@ -1144,16 +1142,13 @@ function initChat() {
         const div     = document.createElement('div');
         div.className = `message-row ${isSelf ? 'self' : ''} ${stacked ? 'stacked' : ''} ${msg.deleted ? 'deleted' : ''}`;
         div.dataset.messageId = msg.id || '';
-        const displayName = isSelf ? currentUsername : msg.from;
-        const replyFrom   = msg.reply_from === 'You' ? currentUsername : msg.reply_from;
-        const replyClass  = replyFrom === currentUsername ? ' reply-to-self' : '';
-        const reply = msg.reply_to_id ? `<div class="reply-context${replyClass}">↳ ${escapeHtml(replyFrom || 'Message')}: ${escapeHtml(msg.reply_text || '')}</div>` : '';
+        const reply = msg.reply_to_id ? `<div class="reply-context">↳ ${escapeHtml(msg.reply_from || 'Message')}: ${escapeHtml(msg.reply_text || '')}</div>` : '';
         const edited = msg.edited_at ? '<span class="edited-label">edited</span>' : '';
         const actions = isSelf && !msg.deleted && msg.id ? `<div class="message-actions"><button data-chat-action="reply">Reply</button><button data-chat-action="edit">Edit</button><button data-chat-action="delete">Delete</button></div>` : `<div class="message-actions"><button data-chat-action="reply">Reply</button></div>`;
         div.innerHTML = `
-            <div class="message-avatar">${stacked ? '' : `<img src="${avatarUrl(isSelf ? (msg.avatar_seed || currentUserAvatar || currentUsername) : (msg.avatar_seed || msg.from))}" alt="">`}</div>
+            <div class="message-avatar">${stacked ? '' : `<img src="${avatarUrl(msg.avatar_seed || msg.from)}" alt="">`}</div>
             <div class="message-main">
-                ${stacked ? '' : `<div class="message-head"><span class="sender">${escapeHtml(displayName)}</span><span class="time">${escapeHtml(msg.time || '')}</span></div>`}
+                ${stacked ? '' : `<div class="message-head"><span class="sender">${escapeHtml(isSelf ? 'You' : msg.from)}</span><span class="time">${escapeHtml(msg.time || '')}</span></div>`}
                 ${reply}
                 <div class="message-text">${escapeHtml(msg.deleted ? '[deleted]' : msg.text)} ${edited}</div>
             </div>
@@ -1166,7 +1161,6 @@ function initChat() {
         const partner = from === currentUsername ? to : from;
         if (!messagesHistory[partner]) messagesHistory[partner] = [];
         const msg = { from, to, text, time: extra.time || getTime(), sent_at: extra.sent_at || new Date().toISOString(), ...extra };
-        if (from === currentUsername && !msg.avatar_seed) msg.avatar_seed = currentUserAvatar || currentUsername;
         messagesHistory[partner].push(msg);
         if (currentChatPartner === partner) renderMessages(partner);
     }
@@ -1184,7 +1178,7 @@ function initChat() {
         if (!msg || !replyPreview) return;
         replyTarget = msg;
         replyPreview.style.display = 'flex';
-        replyPreview.innerHTML = `<span>Replying to ${escapeHtml(msg.from === currentUsername ? currentUsername : msg.from)}: ${escapeHtml(msg.text).slice(0, 70)}</span><button type="button" data-chat-action="cancel-reply">×</button>`;
+        replyPreview.innerHTML = `<span>Replying to ${escapeHtml(msg.from === currentUsername ? 'yourself' : msg.from)}: ${escapeHtml(msg.text).slice(0, 70)}</span><button type="button" data-chat-action="cancel-reply">×</button>`;
         messageInput.focus();
     }
 
@@ -1258,7 +1252,6 @@ function initChat() {
 
         chatSocket.onopen = () => {
             currentUsername        = username;
-            if (!currentUserAvatar) currentUserAvatar = username;
             statusSpan.textContent = `Connected as ${username}`;
             statusSpan.className   = 'status-online';
             onlineUsers.clear();
@@ -1315,7 +1308,7 @@ function initChat() {
 
         const saved = await saveMessageToDB(currentChatPartner, text, reply?.id);
         if (!saved) { messageInput.value = text; alert('Could not send message'); return; }
-        const extra = { id: saved.id, time: saved.time || getTime(), sent_at: saved.sent_at || new Date().toISOString(), reply_to_id: reply?.id, reply_from: reply?.from, reply_text: reply?.text, avatar_seed: currentUserAvatar || currentUsername };
+        const extra = { id: saved.id, time: saved.time || getTime(), sent_at: saved.sent_at || new Date().toISOString(), reply_to_id: reply?.id, reply_from: reply?.from, reply_text: reply?.text, avatar_seed: currentUsername };
         addMessageLocally(currentUsername, currentChatPartner, text, extra);
         clearReply();
         if (chatSocket && chatSocket.readyState === WebSocket.OPEN)

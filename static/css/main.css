@@ -1401,7 +1401,6 @@ body.chat-page .messages-container { gap: 2px; padding: 22px 28px; }
 .message-actions button { border: 0; border-radius: 6px; background: transparent; color: #b9bbbe; font-size: 11px; cursor: pointer; padding: 4px 6px; }
 .message-actions button:hover { background: rgba(155,89,182,0.22); color: #fff; }
 .reply-context, .reply-preview { color: #b9bbbe; background: rgba(155,89,182,0.10); border-left: 3px solid rgba(192,132,252,0.75); border-radius: 8px; padding: 6px 9px; font-size: 12px; margin: 2px 0 5px; max-width: 720px; }
-.reply-context.reply-to-self { color: #ffe6a3; background: rgba(250,166,26,0.13); border-left-color: #faa61a; }
 .reply-preview { position: absolute; left: 24px; right: 24px; bottom: calc(100% + 8px); align-items: center; justify-content: space-between; box-shadow: 0 8px 22px rgba(0,0,0,0.35); }
 .reply-preview button { background: transparent; border: 0; color: #dbdee1; cursor: pointer; padding: 0 6px; font-size: 18px; }
 .edited-label { color: #72767d; font-size: 11px; margin-left: 4px; }

@@ -69,6 +69,7 @@ map.addControl(new maplibregl.NavigationControl({
 let isLoggedIn      = false;
 let currentUsername = null;
 let currentAvatarSeed = null;
+let mapSocket = null;
 
 function dicebearAvatar(seed) {
     return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
@@ -112,6 +113,23 @@ function refreshPlayerAvatar(player) {
     if (marker) marker.el.querySelector('img')?.setAttribute('src', src);
 }
 
+// Small cookie helpers for the once-per-session map sync.
+function setCookie(name, value) {
+    document.cookie = `${name}=${encodeURIComponent(value)}; path=/; samesite=lax`;
+}
+
+function getCookie(name) {
+    return document.cookie.split('; ').find(row => row.startsWith(name + '='))?.split('=')[1];
+}
+
+function deleteCookie(name) {
+    document.cookie = `${name}=; path=/; max-age=0; samesite=lax`;
+}
+
+function mapPresenceCookie() {
+    return `map_presence_${encodeURIComponent(currentUsername || 'guest')}`;
+}
+
 
 // Updates global login state and refreshes the avatar + menu button text.
 // Also updates the demo player's gamertag to match the logged-in user.
@@ -127,11 +145,14 @@ function setLoggedIn(status, username, avatarSeed) {
         avatarImg.alt = username;
     }
 
+    if (!status) deleteCookie(mapPresenceCookie());
+
     // Make the demo marker represent the real logged-in user's gamertag/avatar.
     if (status && username) {
         const demo = PLAYERS.find(p => p.isDemo);
         if (demo) { demo.gamertag = username; demo.avatarSeed = currentAvatarSeed; refreshPlayerAvatar(demo); }
         renderMapMarkers(getVisiblePlayers());
+        connectMapSocket();
         sendMapPresence();
         loadLivePlayers();
     }
@@ -146,18 +167,43 @@ async function checkSession() {
     } catch (e) { console.warn('Session check failed:', e); }
 }
 
+// Sends browser location once, then the server stores the randomized version.
 function sendMapPresence() {
-    if (!isLoggedIn) return;
-    const demo = PLAYERS.find(p => p.isDemo);
-    if (!demo) return;
-    fetch('/api/presence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({ lat: demo.lat, lng: demo.lng })
-    }).catch(() => {});
+    if (!isLoggedIn || !navigator.geolocation || getCookie(mapPresenceCookie())) return;
+    navigator.geolocation.getCurrentPosition(async pos => {
+        try {
+            const res = await fetch('/api/map/presence', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body: JSON.stringify({
+                    lat: pos.coords.latitude,
+                    lng: pos.coords.longitude
+                })
+            });
+            const data = await res.json().catch(() => ({}));
+            if (!data.success) return;
+            setCookie(mapPresenceCookie(), '1');
+            const demo = PLAYERS.find(p => p.isDemo);
+            if (demo && data.lat != null && data.lng != null) {
+                demo.lat = Number(data.lat);
+                demo.lng = Number(data.lng);
+                renderMapMarkers(getVisiblePlayers());
+            }
+        } catch (e) { console.warn('Map presence failed:', e); }
+    }, e => console.warn('Location permission failed:', e.message));
 }
 
+// Keeps the map updated when other users move or come online.
+function connectMapSocket() {
+    if (mapSocket || !window.WebSocket) return;
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    mapSocket = new WebSocket(`${protocol}://${location.host}/ws/map`);
+    mapSocket.onmessage = e => applyLivePlayers(JSON.parse(e.data).players || []);
+    mapSocket.onclose = () => { mapSocket = null; };
+}
+
+// Merges server players into the existing demo/player list.
 function mergeLivePlayer(player) {
     const existing = PLAYERS.find(p => p.id === player.id);
     const mapped = {
@@ -173,7 +219,7 @@ function mergeLivePlayer(player) {
         location: player.location || 'malmo',
         avatarSeed: player.avatarSeed || player.gamertag || player.username,
         mapVisible: true,
-        friendship_status: player.friendship_status || 'none',
+        friendship_status: player.friendship_status || (existing && existing.friendship_status) || 'none',
         is_self: !!player.is_self,
         isLive: true
     };
@@ -186,17 +232,22 @@ function mergeLivePlayer(player) {
     else PLAYERS.push(mapped);
 }
 
+function applyLivePlayers(players) {
+    const liveIds = new Set();
+    (players || []).forEach(p => { liveIds.add(p.id); mergeLivePlayer(p); });
+    for (let i = PLAYERS.length - 1; i >= 0; i--) {
+        if (PLAYERS[i].isLive && !PLAYERS[i].isDemo && !liveIds.has(PLAYERS[i].id)) PLAYERS.splice(i, 1);
+    }
+    renderMapMarkers(getVisiblePlayers());
+}
+
+// Fallback fetch so the map still loads if the socket is late.
 async function loadLivePlayers() {
     try {
         const res = await fetch('/api/players', { credentials: 'same-origin' });
         const data = await res.json();
         if (!data.success) return;
-        const liveIds = new Set();
-        (data.players || []).forEach(p => { liveIds.add(p.id); mergeLivePlayer(p); });
-        for (let i = PLAYERS.length - 1; i >= 0; i--) {
-            if (PLAYERS[i].isLive && !PLAYERS[i].isDemo && !liveIds.has(PLAYERS[i].id)) PLAYERS.splice(i, 1);
-        }
-        renderMapMarkers(getVisiblePlayers());
+        applyLivePlayers(data.players || []);
     } catch (e) { console.warn('Failed to load live players:', e); }
 }
 
@@ -359,6 +410,7 @@ function renderMapMarkers(playerList) {
 
 map.on('load', () => {
     renderMapMarkers(getVisiblePlayers());
+    connectMapSocket();
     loadLivePlayers();
 });
 
@@ -655,6 +707,7 @@ async function handleLogout() {
     try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); }
     catch (e) { console.warn('Logout failed:', e); }
     setLoggedIn(false, null);
+    if (mapSocket) { mapSocket.close(); mapSocket = null; }
     // Refresh admin panel after logout
     if (window.checkAdmin) window.checkAdmin();
     alert('Logged out successfully');
@@ -832,7 +885,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateLoginLogoutButton();
     checkSession();
-setInterval(() => { sendMapPresence(); loadLivePlayers(); }, 8000);
+    setInterval(sendMapPresence, 15000);
     checkAdmin();         // show admin panel for admins
     initEventSystem();    // event creation button + form
     initCustomSelects();  // custom glassy dropdowns

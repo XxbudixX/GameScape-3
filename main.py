@@ -5,6 +5,8 @@ import os
 import urllib.request
 import urllib.parse
 import json
+import math
+import random
 import threading
 from datetime import datetime
 
@@ -29,8 +31,89 @@ app.secret_key = "hemlig_nyckel"
 if SOCK_AVAILABLE:
     sock = Sock(app)
 connected_users = {}
+connected_map_clients = set()
 
 STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E'
+
+MAP_DEFAULT_LAT = 55.605
+MAP_DEFAULT_LNG = 13.008
+
+# Random offset used for the shown map position.
+def randomize_location(lat, lng, radius_m=500):
+    distance = radius_m * math.sqrt(random.random())
+    angle = random.random() * math.tau
+    lat += (distance * math.cos(angle)) / 111320
+    lng += (distance * math.sin(angle)) / (111320 * math.cos(math.radians(lat)))
+    return lat, lng
+
+# Builds the player list that the map and websocket share.
+def fetch_players_for_map():
+    conn, cur = connect_db()
+    if conn is None:
+        return []
+    try:
+        ensure_presence_columns(cur)
+        cur.execute("""
+            SELECT user_id, username, status, latitude, longitude, last_active, avatar_seed, birthday,
+                   COALESCE(is_invisible,FALSE) AS is_invisible,
+                   CASE
+                       WHEN COALESCE(is_invisible,FALSE) THEN 'offline'
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '30 seconds') THEN 'active'
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '10 minutes') THEN 'recent'
+                       ELSE 'offline'
+                   END AS live_status,
+                   CASE
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '30 seconds') THEN 'Just now'
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '10 minutes') THEN 'Recently'
+                       ELSE COALESCE(last_active::text, 'Unknown')
+                   END AS last_active_label
+            FROM users
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+              AND COALESCE(is_invisible,FALSE) = FALSE
+              AND COALESCE(status, 'offline') != 'invisible'
+        """)
+        rows = cur.fetchall()
+        players = []
+        for r in rows:
+            uid = r[0]
+            cur.execute("""
+                SELECT sg.appid, sg.name, sg.icon_url
+                FROM steam_games sg
+                JOIN user_steam_games usg ON sg.appid = usg.appid
+                WHERE usg.user_id = %s LIMIT 6
+            """, (uid,))
+            games = [{'appid': g[0], 'name': g[1], 'icon_url': g[2]} for g in cur.fetchall()]
+            players.append({
+                'id': uid,
+                'gamertag': r[1],
+                'status': r[9] or 'offline',
+                'lat': float(r[3]),
+                'lng': float(r[4]),
+                'lastActive': r[10] or 'Unknown',
+                'avatarSeed': r[6] or r[1],
+                'games': games,
+                'age': calculate_age(r[7]) or '—',
+                'friendship_status': 'none',
+                'is_self': False,
+            })
+        return players
+    except Exception as e:
+        print('fetch_players_for_map error:', e)
+        return []
+    finally:
+        cur.close(); conn.close()
+
+# Sends the newest map state to all open map pages.
+def broadcast_map_snapshot():
+    if not SOCK_AVAILABLE:
+        return
+    payload = json.dumps({'players': fetch_players_for_map()})
+    for ws in list(connected_map_clients):
+        try:
+            ws.send(payload)
+        except Exception:
+            connected_map_clients.discard(ws)
+
 
 #  Page routes 
 
@@ -644,6 +727,7 @@ def ensure_friend_requests_table(cur):
         _friend_schema_ready = True
 
 
+# Makes sure older local databases have the map presence columns.
 def ensure_presence_columns(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION")
@@ -756,7 +840,54 @@ def update_presence():
         else:
             touch_current_user(cur)
         conn.commit()
+        broadcast_map_snapshot()
         return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+# Browser location comes in here and is saved as a randomized map position.
+@app.route('/api/map/presence', methods=['POST'])
+def update_map_presence():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    data = request.get_json() or {}
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_presence_columns(cur)
+        if session.get('map_presence_done'):
+            cur.execute("""
+                UPDATE users
+                SET is_online=CASE WHEN COALESCE(is_invisible,FALSE) THEN FALSE ELSE TRUE END,
+                    last_active=CURRENT_TIMESTAMP
+                WHERE user_id=%s
+                RETURNING latitude, longitude
+            """, (session['user_id'],))
+            row = cur.fetchone()
+            lat, lng = row[0], row[1]
+        else:
+            lat = float(data.get('lat'))
+            lng = float(data.get('lng'))
+            lat, lng = randomize_location(lat, lng)
+            cur.execute("""
+                UPDATE users
+                SET latitude=%s, longitude=%s,
+                    is_online=CASE WHEN COALESCE(is_invisible,FALSE) THEN FALSE ELSE TRUE END,
+                    last_active=CURRENT_TIMESTAMP
+                WHERE user_id=%s
+            """, (lat, lng, session['user_id']))
+            session['map_presence_done'] = True
+        conn.commit()
+        broadcast_map_snapshot()
+        return jsonify({'success': True, 'lat': lat, 'lng': lng})
+    except (TypeError, ValueError):
+        conn.rollback()
+        return jsonify({'success': False, 'error': 'Missing location'}), 400
     except Exception as e:
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1300,5 +1431,18 @@ if SOCK_AVAILABLE:
             print(f'[WS] {username} disconnected. Online: {list(connected_users.keys())}')
 
 
+
+if SOCK_AVAILABLE:
+    # Live map socket. New clients get the latest player snapshot right away.
+    @sock.route('/ws/map')
+    def websocket_map(ws):
+        connected_map_clients.add(ws)
+        try:
+            ws.send(json.dumps({'players': fetch_players_for_map()}))
+            while ws.receive() is not None:
+                pass
+        finally:
+            connected_map_clients.discard(ws)
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=True)
