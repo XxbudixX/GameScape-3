@@ -720,43 +720,16 @@ if SOCK_AVAILABLE:
                 connected_users.pop(username, None)
             print(f'[WS] {username} disconnected. Online: {list(connected_users.keys())}')
 
-<<<<<<< Updated upstream
-connected_map_clients = set()
-
+# --- Map WebSocket ---
 
 def fetch_players_for_map():
     conn, cur = connect_db()
     if conn is None:
-=======
-if SOCK_AVAILABLE:
-    @sock.route('/ws/map')
-    def ws_map(ws):
-        connected_map_clients.add(ws)
-        try:
-            # Skicka snapshot direkt vid anslutning
-            ws.send(json.dumps({
-                'type': 'players_snapshot',
-                'players': fetch_players_for_map()
-            }))
-            # Håll anslutningen öppen (vi kan ignorera inkommande)
-            while True:
-                raw = ws.receive()
-                if raw is None:
-                    break
-        finally:
-            connected_map_clients.discard(ws)
-
-def fetch_players_for_map():
-    conn, cur = connect_db()
-
-    if conn is None: 
->>>>>>> Stashed changes
         return []
     try:
         cur.execute("""
             SELECT user_id, username, status, latitude, longitude, last_active
             FROM users
-<<<<<<< Updated upstream
             WHERE latitude IS NOT NULL AND longitude IS NOT NULL
               AND status != 'invisible'
         """)
@@ -775,49 +748,20 @@ def fetch_players_for_map():
             players.append({
                 'id': uid,
                 'gamertag': r[1],
-=======
-            WHERE latitude IS NOT NULL AND longitude IS NOT NULL AND status != 'invisible'
-            """)
-        
-        rows = cur.fetchall()
-
-        players = []
-        for r in rows: 
-            uid = r[0]
-            cur.execute("""
-                SELECT sg.appid, sg.name, sg.icon_url 
-                FROM steam_games sg
-                JOIN user_steam_games usg ON sg.appid = usg.appid
-                WHERE usg.user_id = %s LIMIT 6
-                """,(uid,))
-            
-            games = [{'appid': g[0], 'name':g[1], 'icon_url': g[2] } for g in cur.fetchall()]
-
-            players.append({
-                'id': uid,
-                'gamertag' : r[1],
->>>>>>> Stashed changes
                 'status': r[2] or 'offline',
                 'lat': float(r[3]),
                 'lng': float(r[4]),
                 'lastActive': str(r[5]) if r[5] else 'Unknown',
-<<<<<<< Updated upstream
                 'games': games,
             })
         return players
     except Exception as e:
         print("fetch_players_for_map error:", e)
         return []
-=======
-                'games' : games,
-            })
-        return players
->>>>>>> Stashed changes
     finally:
         cur.close()
         conn.close()
 
-<<<<<<< Updated upstream
 if SOCK_AVAILABLE:
     @sock.route('/ws/map')
     def ws_map(ws):
@@ -829,17 +773,13 @@ if SOCK_AVAILABLE:
                 'players': fetch_players_for_map()
             }))
             while True:
-                msg = ws.receive()
-                if msg is None:
+                raw = ws.receive()
+                if raw is None:
                     break
         except Exception as e:
             print("[WS map] error:", e)
         finally:
             connected_map_clients.discard(ws)
-            print("[WS map] client disconnected")
-=======
-
->>>>>>> Stashed changes
-
+            print("[WS map] client disconnected")            
 if __name__ == '__main__':
     app.run(debug=True)

@@ -23,12 +23,6 @@ const PLAYERS = [
     { id: 99, gamertag: 'Demo',          games: ['Valorant', 'CS2', 'Fortnite'], rank: 'Gold',       status: 'active',  lng: 13.008, lat: 55.603, lastActive: 'Just now',   age: 22, location: 'malmo',     avatarSeed: 'GameScape',   mapVisible: true, isDemo: true },
 ];
 
-let livePlayers = null;
-
-function currentPlayersForMap(){
-    return livePlayers || getVisiblePlayers();
-}
-
 
 
 //  Demo visibility (eye icon in profile page) 
@@ -745,7 +739,6 @@ document.addEventListener('DOMContentLoaded', () => {
     initMapWebSocket();
 
     updateLocationCounts(); // city player counts
-    initMapWebSocket();
 
     // Auto-open login modal if redirected here with ?login=1 (e.g. from chat page)
     if (new URLSearchParams(window.location.search).get('login') === '1') {
@@ -1225,7 +1218,6 @@ function refreshEventMarkers() {
     });
 }
 
-<<<<<<< Updated upstream
 function initMapWebSocket() {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${window.location.host}/ws/map`);
@@ -1241,31 +1233,13 @@ function initMapWebSocket() {
             if (incoming.length > 0) {
                 window.livePlayers = incoming.map(p => ({ ...p, mapVisible: true }));
                 renderMapMarkers(window.currentPlayersForMap());
+                if (typeof refreshEventMarkers === 'function') refreshEventMarkers();
             } else {
                 console.warn('[map ws] snapshot empty (keeping demo)');
             }
         }
     };
 
-    ws.onerror = () => console.warn('[map ws] error');
-    ws.onclose = () => console.warn('[map ws] closed');
+    ws.onerror = (e) => console.warn('[map ws] error', e);
+    ws.onclose = (e) => console.warn('[map ws] closed', e.code, e.reason);
 }
-=======
-function initMapWebSocket(){
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/map`);
-
-    ws.onmessage = (e) => {
-        let msg;
-        try { msg = JSON.parse(e.data);} catch {return;}
-
-        if (msg.type === 'players_snapshot'){
-            livePlayers = (msg.players || []).map(p => ({...p, mapVisible:true}));
-            renderMapMarkers(currentPlayersForMap());
-            if (typeof refreshEventMarkers === 'function') refreshEventMarkers();
-        }
-    };
-    ws.onerror = () => console.warn('[map ws] error');
-    ws.onclose = () => console.warn('[map ws] closed');
-}
->>>>>>> Stashed changes
