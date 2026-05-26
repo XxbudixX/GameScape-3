@@ -719,6 +719,68 @@ if SOCK_AVAILABLE:
                 connected_users.pop(username, None)
             print(f'[WS] {username} disconnected. Online: {list(connected_users.keys())}')
 
+connected_map_clients = set()
+
+
+def fetch_players_for_map():
+    conn, cur = connect_db()
+    if conn is None:
+        return []
+    try:
+        cur.execute("""
+            SELECT user_id, username, status, latitude, longitude, last_active
+            FROM users
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+              AND status != 'invisible'
+        """)
+        rows = cur.fetchall()
+        players = []
+        for r in rows:
+            uid = r[0]
+            cur.execute("""
+                SELECT sg.appid, sg.name, sg.icon_url
+                FROM steam_games sg
+                JOIN user_steam_games usg ON sg.appid = usg.appid
+                WHERE usg.user_id = %s
+                LIMIT 6
+            """, (uid,))
+            games = [{'appid': g[0], 'name': g[1], 'icon_url': g[2]} for g in cur.fetchall()]
+            players.append({
+                'id': uid,
+                'gamertag': r[1],
+                'status': r[2] or 'offline',
+                'lat': float(r[3]),
+                'lng': float(r[4]),
+                'lastActive': str(r[5]) if r[5] else 'Unknown',
+                'games': games,
+            })
+        return players
+    except Exception as e:
+        print("fetch_players_for_map error:", e)
+        return []
+    finally:
+        cur.close()
+        conn.close()
+
+if SOCK_AVAILABLE:
+    @sock.route('/ws/map')
+    def ws_map(ws):
+        connected_map_clients.add(ws)
+        print("[WS map] client connected")
+        try:
+            ws.send(json.dumps({
+                'type': 'players_snapshot',
+                'players': fetch_players_for_map()
+            }))
+            while True:
+                msg = ws.receive()
+                if msg is None:
+                    break
+        except Exception as e:
+            print("[WS map] error:", e)
+        finally:
+            connected_map_clients.discard(ws)
+            print("[WS map] client disconnected")
 
 if __name__ == '__main__':
     app.run(debug=True)

@@ -32,6 +32,13 @@ function getDemoVisible() {
     return v === null ? true : v === 'true';
 }
 
+window.livePlayers = null;
+
+window.currentPlayersForMap = function() {
+    return window.livePlayers || getVisiblePlayers();
+};
+
+
 // Called by profile.js (inside iframe) via window.setDemoVisible().
 function setDemoVisible(val) {
     localStorage.setItem(DEMO_VISIBLE_KEY, String(val));
@@ -251,7 +258,7 @@ function renderMapMarkers(playerList) {
 }
 
 map.on('load', () => {
-    renderMapMarkers(getVisiblePlayers());
+    renderMapMarkers(window.currentPlayersForMap());
 });
 
 map.on('error', (e) => {
@@ -686,10 +693,12 @@ window.addGame = addGame;
 
 //  DOMContentLoaded 
 
+
 document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('hamburgerBtn')?.addEventListener('click', toggleMenu);
     document.getElementById('menuCloseBtn')?.addEventListener('click', closeMenu);
     document.getElementById('menuOverlay')?.addEventListener('click', closeMenu);
+
 
     document.querySelectorAll('.menu-items li').forEach(item => {
         item.addEventListener('click', (e) => {
@@ -720,6 +729,8 @@ document.addEventListener('DOMContentLoaded', () => {
     checkAdmin();         // show admin panel for admins
     initEventSystem();    // event creation button + form
     initCustomSelects();  // custom glassy dropdowns
+    initMapWebSocket();
+
     updateLocationCounts(); // city player counts
 
     // Auto-open login modal if redirected here with ?login=1 (e.g. from chat page)
@@ -1198,4 +1209,29 @@ function refreshEventMarkers() {
             }
         };
     });
+}
+
+function initMapWebSocket() {
+    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const ws = new WebSocket(`${proto}//${window.location.host}/ws/map`);
+
+    ws.onopen = () => console.log('[map ws] open');
+
+    ws.onmessage = (e) => {
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+
+        if (msg.type === 'players_snapshot') {
+            const incoming = msg.players || [];
+            if (incoming.length > 0) {
+                window.livePlayers = incoming.map(p => ({ ...p, mapVisible: true }));
+                renderMapMarkers(window.currentPlayersForMap());
+            } else {
+                console.warn('[map ws] snapshot empty (keeping demo)');
+            }
+        }
+    };
+
+    ws.onerror = () => console.warn('[map ws] error');
+    ws.onclose = () => console.warn('[map ws] closed');
 }
