@@ -1,3 +1,6 @@
+from gevent import monkey
+monkey.patch_all()
+
 from flask import Flask, request, jsonify, session, send_from_directory
 from databas import connect_db
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -785,5 +788,11 @@ if SOCK_AVAILABLE:
             connected_map_clients.discard(ws)
             print("[WS map] client disconnected")     
 
-if __name__ == '__main__':
-    app.run(debug=True, use_reloader=False)
+
+if __name__ == "__main__":
+    if SOCK_AVAILABLE:
+        from gevent.pywsgi import WSGIServer
+        print("[server] gevent on http://127.0.0.1:5000")
+        WSGIServer(("127.0.0.1", 5000), app).serve_forever()
+    else:
+        app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)

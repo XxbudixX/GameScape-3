@@ -1217,6 +1217,24 @@ function refreshEventMarkers() {
         };
     });
 }
+function spreadOverlappingPlayers(players) {
+    const seen = new Map(); // "lat,lng" -> count
+    return players.map(p => {
+        const key = `${p.lat},${p.lng}`;
+        const i = (seen.get(key) || 0);
+        seen.set(key, i + 1);
+        if (i === 0) return p;
+
+        // liten offset i "cirkel" runt punkten (~5–20 meter)
+        const r = 0.00012 * Math.ceil(i / 6);
+        const a = (i % 6) * (Math.PI * 2 / 6);
+        return {
+            ...p,
+            lat: p.lat + Math.sin(a) * r,
+            lng: p.lng + Math.cos(a) * r,
+        };
+    });
+}
 
 function initMapWebSocket() {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -1231,7 +1249,8 @@ function initMapWebSocket() {
         if (msg.type === 'players_snapshot') {
             const incoming = msg.players || [];
             if (incoming.length > 0) {
-                window.livePlayers = incoming.map(p => ({ ...p, mapVisible: true }));
+                
+                    window.livePlayers = spreadOverlappingPlayers(incoming).map(p => ({ ...p, mapVisible: true }));
                 renderMapMarkers(window.currentPlayersForMap());
                 if (typeof refreshEventMarkers === 'function') refreshEventMarkers();
             } else {
