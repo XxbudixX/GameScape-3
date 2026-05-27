@@ -35,10 +35,13 @@ function getDemoVisible() {
 }
 
 window.livePlayers = null;
-
-window.currentPlayersForMap = function() {
-    return window.livePlayers || getVisiblePlayers();
+window.currentPlayersForMap = function () {
+    if (Array.isArray(window.livePlayers) && window.livePlayers.length > 0) {
+        return window.livePlayers;
+    }
+    return getVisiblePlayers(); // demo-listan (respekterar demo visibility)
 };
+
 
 
 // Called by profile.js (inside iframe) via window.setDemoVisible().
@@ -46,7 +49,8 @@ function setDemoVisible(val) {
     localStorage.setItem(DEMO_VISIBLE_KEY, String(val));
     const demo = PLAYERS.find(p => p.isDemo);
     if (demo) demo.mapVisible = val;
-    renderMapMarkers(getVisiblePlayers());
+
+    renderMapMarkers(window.currentPlayersForMap());
     refreshEventMarkers();
 }
 // Apply persisted visibility on load
@@ -140,7 +144,7 @@ function setLoggedIn(status, username, avatarSeed) {
     if (status && username) {
         const demo = PLAYERS.find(p => p.isDemo);
         if (demo) { demo.gamertag = username; demo.avatarSeed = currentAvatarSeed; refreshPlayerAvatar(demo); }
-        renderMapMarkers(getVisiblePlayers());
+        renderMapMarkers(window.currentPlayersForMap());
         sendMapPresence();
         loadLivePlayers();
     }
@@ -158,16 +162,15 @@ async function checkSession() {
         }
     } catch (e) { console.warn('Session check failed:', e); }
 }
-
 function sendMapPresence() {
     if (!isLoggedIn) return;
-    const demo = PLAYERS.find(p => p.isDemo);
-    if (!demo) return;
+
+    // Skicka INGEN lat/lng -> backend touchar bara last_active/is_online
     fetch('/api/presence', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ lat: demo.lat, lng: demo.lng })
+        body: JSON.stringify({})
     }).catch(() => {});
 }
 
@@ -204,13 +207,22 @@ async function loadLivePlayers() {
         const res = await fetch('/api/players', { credentials: 'same-origin' });
         const data = await res.json();
         if (!data.success) return;
-        const liveIds = new Set();
-        (data.players || []).forEach(p => { liveIds.add(p.id); mergeLivePlayer(p); });
-        for (let i = PLAYERS.length - 1; i >= 0; i--) {
-            if (PLAYERS[i].isLive && !PLAYERS[i].isDemo && !liveIds.has(PLAYERS[i].id)) PLAYERS.splice(i, 1);
+
+        const incoming = (data.players || []);
+
+        if (incoming.length > 0) {
+            window.livePlayers = spreadOverlappingPlayers(
+                incoming.map(p => ({ ...p, mapVisible: true }))
+            );
+        } else {
+            window.livePlayers = null; // fallback till demo
         }
-        renderMapMarkers(getVisiblePlayers());
-    } catch (e) { console.warn('Failed to load live players:', e); }
+
+        renderMapMarkers(window.currentPlayersForMap());
+        refreshEventMarkers?.();
+    } catch (e) {
+        console.warn('Failed to load live players:', e);
+    }
 }
 
 
@@ -880,10 +892,7 @@ document.addEventListener('DOMContentLoaded', () => {
 //  the marker to see a green event popup with time and game details.
 
 // Pre-loaded demo events so the map isn't empty on first visit
-let activeEvents = [
-    { playerId: 1, eventName: 'Friday Ranked Grind', gameName: 'Valorant', startHour: 8,  startMin: 0,  startAmPm: 'PM', hasEnd: false },
-    { playerId: 6, eventName: 'CS2 5v5 Scrim',       gameName: 'CS2',      startHour: 9,  startMin: 30, startAmPm: 'PM', hasEnd: true, endHour: 11, endMin: 0, endAmPm: 'PM' }
-];
+let activeEvents = [];
 
 const pulseMarkers = {}; // playerId → removal handle
 
@@ -1370,7 +1379,9 @@ function initMapWebSocket() {
                 renderMapMarkers(window.currentPlayersForMap());
                 refreshEventMarkers?.();
             } else {
-                console.warn('[map ws] snapshot empty (keeping demo)');
+                window.livePlayers = null;
+                renderMapMarkers(window.currentPlayersForMap());
+                refreshEventMarkers?.();
             }
         }
     };

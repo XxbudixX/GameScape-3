@@ -236,6 +236,10 @@ def get_players():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
+        req_lat = None
+        req_lng = None
+        radius_km = 25
+
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
         ensure_friend_requests_table(cur)
         ensure_presence_columns(cur)
@@ -533,53 +537,7 @@ def save_settings():
         cur.close();
         conn.close()
 
-        title = data.get('title')
-        #game_id = data.get('game_id')
-        datetime_value = data.get('datetime')
-        description = data.get('description')
-        min_rank = data.get('min_rank')
-        max_rank = data.get('max_rank')
-        #game_name = data.get('game_name')
-        appid = data.get('appid')
-
-        if not title or not appid or not datetime_value:
-            return jsonify({"error": "Missing required fields"}), 400
-        """
-        if not game_row:
-            return jsonify({"error": "Game not found"}), 404
         
-        game_id = game_row[0]"""
-
-        conn, cur = connect_db()
-
-        cur.execute("""
-            INSERT INTO event 
-            (creator_id, 
-            appid,
-            title, 
-            datetime,
-            description,
-            min_rank,
-            max_rank)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (
-        session["user_id"],
-        appid,
-        title,
-        datetime_value,
-        description,
-        min_rank,
-        max_rank
-        ))
-
-        conn.commit()
-        cur.close()
-        conn.close()
-    try:
-        return jsonify({"message": "Event skapat"})
-    except Exception as e:
-        return jsonify({"error":str(e)}) , 500
-    
 #  Admin 
 
 @app.route('/api/admin/delete_event/<int:event_id>', methods=['DELETE'])
@@ -1356,10 +1314,12 @@ def fetch_players_for_map():
         return []
     try:
         cur.execute("""
-            SELECT user_id, username, status, latitude, longitude, last_active
+            SELECT user_id, username, status, latitude, longitude, last_active, COALESCE(avatar_seed, username)
             FROM users
             WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-              AND status != 'invisible'
+            AND COALESCE(is_invisible, FALSE) = FALSE
+            AND COALESCE(status, 'offline') != 'invisible'
+            
         """)
         rows = cur.fetchall()
         players = []
@@ -1380,6 +1340,7 @@ def fetch_players_for_map():
                 'lat': float(r[3]),
                 'lng': float(r[4]),
                 'lastActive': str(r[5]) if r[5] else 'Unknown',
+                'avatarSeed': r[6],
                 'games': games,
             })
         return players
