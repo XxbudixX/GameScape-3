@@ -63,6 +63,20 @@
           <!-- Dropdown for DB user search results.
                Hidden by default; app.js shows it when the search finds new users. -->
           <div id="userSearchResults" class="user-search-results" style="display:none;"></div>
+
+          <button id="addFriendToggle" class="add-friend-toggle" type="button">+ Add a friend</button>
+          <div id="addFriendBox" class="add-friend-box" style="display:none;">
+            <input type="text" id="addFriendInput" placeholder="Username">
+            <button id="addFriendBtn" type="button">Add</button>
+            <div id="addFriendMsg" class="add-friend-msg"></div>
+          </div>
+
+          <div class="chat-friend-tabs">
+            <button class="chat-friend-tab active" data-chat-tab="inbox" type="button">Inbox</button>
+            <button class="chat-friend-tab" data-chat-tab="friends" type="button">Friends</button>
+            <button class="chat-friend-tab" data-chat-tab="requests" type="button">Requests</button>
+          </div>
+          <div id="friendRequestsList" class="friend-requests-list" style="display:none;"></div>
         </div>
 
         <div class="contacts-list" id="contactsList">

@@ -47,7 +47,7 @@ function setDemoVisible(val) {
     const demo = PLAYERS.find(p => p.isDemo);
     if (demo) demo.mapVisible = val;
     renderMapMarkers(getVisiblePlayers());
-    if (typeof refreshEventMarkers === 'function') refreshEventMarkers();
+    refreshEventMarkers();
 }
 // Apply persisted visibility on load
 PLAYERS.find(p => p.isDemo).mapVisible = getDemoVisible();
@@ -77,25 +77,72 @@ map.addControl(new maplibregl.NavigationControl({
 // Global login state updated by setLoggedIn() and checkSession()
 let isLoggedIn      = false;
 let currentUsername = null;
+let currentAvatarSeed = null;
+
+function dicebearAvatar(seed) {
+    return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
+}
+
+function displayGameName(game) {
+    return typeof game === 'string' ? game : (game && game.name ? game.name : 'Game');
+}
+
+async function mapFriendAction(action, username) {
+    let url = '/api/friends/request';
+    let method = 'POST';
+    if (action === 'accept') url = '/api/friends/accept';
+    if (action === 'ignore') url = '/api/friends/ignore';
+    if (action === 'remove') { url = `/api/friends/${encodeURIComponent(username)}`; method = 'DELETE'; }
+    const options = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' };
+    if (method !== 'DELETE') options.body = JSON.stringify({ username });
+    const res = await fetch(url, options);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || data.success === false) throw new Error(data.error || 'Friend action failed');
+    await loadLivePlayers();
+}
+
+function mapFriendActions(player) {
+    if (!isLoggedIn || player.isDemo || player.is_self || player.gamertag === currentUsername) return '';
+    const state = player.friendship_status || 'none';
+    if (state === 'friends') return `<button class="mini-profile-btn friend-action-btn" onclick="window.location.href='/chat'">Chat</button><button class="mini-profile-btn friend-action-btn muted" onclick="window._mapFriendAction('remove','${player.gamertag}')">Remove Friend</button>`;
+    if (state === 'incoming') return `<button class="mini-profile-btn friend-action-btn" onclick="window._mapFriendAction('accept','${player.gamertag}')">Accept Friend</button><button class="mini-profile-btn friend-action-btn muted" onclick="window._mapFriendAction('ignore','${player.gamertag}')">Ignore</button>`;
+    if (state === 'outgoing') return `<button class="mini-profile-btn friend-action-btn muted" disabled>Pending Request</button>`;
+    return `<button class="mini-profile-btn friend-action-btn" onclick="window._mapFriendAction('add','${player.gamertag}')">Add Friend</button>`;
+}
+
+window._mapFriendAction = async function(action, username) {
+    try { await mapFriendAction(action, username); closeAllPopups(); }
+    catch (e) { alert(e.message); }
+};
+
+function refreshPlayerAvatar(player) {
+    const marker = playerMarkers[player.id];
+    const src = dicebearAvatar(player.avatarSeed || player.gamertag);
+    if (marker) marker.el.querySelector('img')?.setAttribute('src', src);
+}
 
 
 // Updates global login state and refreshes the avatar + menu button text.
 // Also updates the demo player's gamertag to match the logged-in user.
-function setLoggedIn(status, username) {
+function setLoggedIn(status, username, avatarSeed) {
     isLoggedIn      = status;
     currentUsername = username || null;
+    currentAvatarSeed = avatarSeed || username || null;
     updateLoginLogoutButton();
 
     const avatarImg = document.querySelector('.avatar-img');
     if (avatarImg && username) {
-        avatarImg.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(username)}`;
+        avatarImg.src = dicebearAvatar(currentAvatarSeed);
         avatarImg.alt = username;
     }
 
-    // Make the demo marker represent the real logged-in user's gamertag
+    // Make the demo marker represent the real logged-in user's gamertag/avatar.
     if (status && username) {
         const demo = PLAYERS.find(p => p.isDemo);
-        if (demo) { demo.gamertag = username; demo.avatarSeed = username; }
+        if (demo) { demo.gamertag = username; demo.avatarSeed = currentAvatarSeed; refreshPlayerAvatar(demo); }
+        renderMapMarkers(getVisiblePlayers());
+        sendMapPresence();
+        loadLivePlayers();
     }
 }
 
@@ -104,11 +151,66 @@ async function checkSession() {
     try {
         const res  = await fetch('/api/me', { credentials: 'same-origin' });
         const data = await res.json();
+
         if (data.logged_in) {
             window.myUserId = data.user_id;
-            setLoggedIn(true, data.username);
+            setLoggedIn(true, data.username, data.avatar_seed);
 }
     } catch (e) { console.warn('Session check failed:', e); }
+}
+
+function sendMapPresence() {
+    if (!isLoggedIn) return;
+    const demo = PLAYERS.find(p => p.isDemo);
+    if (!demo) return;
+    fetch('/api/presence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ lat: demo.lat, lng: demo.lng })
+    }).catch(() => {});
+}
+
+function mergeLivePlayer(player) {
+    const existing = PLAYERS.find(p => p.id === player.id);
+    const mapped = {
+        id: player.id,
+        gamertag: player.gamertag || player.username,
+        games: player.games || [],
+        rank: player.rank || 'Unranked',
+        status: player.status || 'offline',
+        lng: player.lng,
+        lat: player.lat,
+        lastActive: player.lastActive || 'Unknown',
+        age: player.age || '—',
+        location: player.location || 'malmo',
+        avatarSeed: player.avatarSeed || player.gamertag || player.username,
+        mapVisible: true,
+        friendship_status: player.friendship_status || 'none',
+        is_self: !!player.is_self,
+        isLive: true
+    };
+    if (mapped.gamertag === currentUsername) {
+        const demo = PLAYERS.find(p => p.isDemo);
+        if (demo) Object.assign(demo, mapped, { id: demo.id, isDemo: true, mapVisible: getDemoVisible() });
+        return;
+    }
+    if (existing) Object.assign(existing, mapped);
+    else PLAYERS.push(mapped);
+}
+
+async function loadLivePlayers() {
+    try {
+        const res = await fetch('/api/players', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!data.success) return;
+        const liveIds = new Set();
+        (data.players || []).forEach(p => { liveIds.add(p.id); mergeLivePlayer(p); });
+        for (let i = PLAYERS.length - 1; i >= 0; i--) {
+            if (PLAYERS[i].isLive && !PLAYERS[i].isDemo && !liveIds.has(PLAYERS[i].id)) PLAYERS.splice(i, 1);
+        }
+        renderMapMarkers(getVisiblePlayers());
+    } catch (e) { console.warn('Failed to load live players:', e); }
 }
 
 
@@ -117,7 +219,7 @@ async function checkSession() {
 // UPDATED: URLs now use Flask routes (/login, /register, /profile) instead
 // of the old flat-file paths (login/login.html, etc.).
 
-function openModalPage(page) {
+function openModalPage(page, wide = false) {
     let overlay = document.getElementById('modalOverlay');
     if (!overlay) {
         overlay           = document.createElement('div');
@@ -133,6 +235,8 @@ function openModalPage(page) {
         frame.className = 'modal-frame';
         document.body.appendChild(frame);
     }
+    // Toggle the wide class based on the caller's request
+    frame.classList.toggle('wide', wide);
     frame.src = page;
     overlay.classList.add('show');
     frame.classList.add('show');
@@ -205,7 +309,7 @@ function buildAvatarMarkerEl(player) {
     wrap.className = 'avatar-marker' + (player.isDemo ? ' demo-marker' : '');
 
     const img = document.createElement('img');
-    img.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}`;
+    img.src = dicebearAvatar(player.avatarSeed || player.gamertag);
     img.alt = player.gamertag;
     wrap.appendChild(img);
 
@@ -250,9 +354,15 @@ function renderMapMarkers(playerList) {
             delete playerMarkers[id];
         }
     });
-    // Add new ones
+    // Add new markers, and repaint existing marker avatars when their seed changes.
     playerList.forEach(player => {
-        if (playerMarkers[player.id]) return;
+        if (playerMarkers[player.id]) {
+            playerMarkers[player.id].marker.setLngLat([player.lng, player.lat]);
+            refreshPlayerAvatar(player);
+            const dot = playerMarkers[player.id].el.querySelector('.status-ring');
+            if (dot) dot.style.background = player.status === 'active' ? '#39d98a' : player.status === 'recent' ? '#f5a623' : '#6c6f78';
+            return;
+        }
         const el     = buildAvatarMarkerEl(player);
         const marker = new maplibregl.Marker({ element: el, anchor: 'center' })
             .setLngLat([player.lng, player.lat])
@@ -269,6 +379,7 @@ map.on('load', () => {
 
 map.on('load', () => {
     renderMapMarkers(window.currentPlayersForMap());
+    loadLivePlayers();
 });
 
 map.on('error', (e) => {
@@ -311,23 +422,26 @@ function openPlayerModal(player) {
 
     const statusText  = { active: 'Active now', recent: `Active ${player.lastActive}`, offline: 'Offline' }[player.status];
     const statusColor = { active: '#39d98a', recent: '#f5a623', offline: '#6c6f78' }[player.status];
+    player.games = (player.games || []).map(displayGameName);
     const gameTags    = player.games.map(g => `<span class="modal-game-tag">${g}</span>`).join('');
 
     box.innerHTML = `
         <div class="player-modal">
             <button class="close-btn-modal" onclick="window.closePlayerModal()">✕</button>
-            <div class="player-modal-header">
-                <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}"
-                     class="player-avatar-img" alt="${player.gamertag}">
-                <div class="player-info">
-                    <div class="player-name">${player.gamertag}</div>
-                    <div class="player-status" style="color:${statusColor}">● ${statusText}</div>
+            <div class="player-modal-scroll">
+                <div class="player-modal-header">
+                    <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}"
+                         class="player-avatar-img" alt="${player.gamertag}">
+                    <div class="player-info">
+                        <div class="player-name">${player.gamertag}</div>
+                        <div class="player-status" style="color:${statusColor}">● ${statusText}</div>
+                    </div>
                 </div>
+                <div class="player-section"><div class="section-label">Games</div><div class="player-games">${gameTags}</div></div>
+                <div class="player-section"><div class="section-label">Rank</div><div>${player.rank}</div></div>
+                <div class="player-section"><div class="section-label">Age</div><div>${player.age}</div></div>
+                <div class="map-friend-actions">${mapFriendActions(player)}</div>
             </div>
-            <div class="player-section"><div class="section-label">Games</div><div class="player-games">${gameTags}</div></div>
-            <div class="player-section"><div class="section-label">Rank</div><div>${player.rank}</div></div>
-            <div class="player-section"><div class="section-label">Age</div><div>${player.age}</div></div>
-            <button class="modal-chat-btn" onclick="window.location.href='/chat'">💬 Start Chat</button>
         </div>`;
 
     // Inject styles once prevents duplicating the <style> tag on repeat opens
@@ -345,6 +459,8 @@ function openPlayerModal(player) {
             .close-btn-modal{position:absolute;top:15px;right:15px;background:rgba(30,31,34,0.6);border:1px solid rgba(155,89,182,0.4);color:#c084fc;font-size:16px;cursor:pointer;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:all 0.2s;z-index:10;}
             .close-btn-modal:hover{background:rgba(155,89,182,0.2);border-color:rgba(155,89,182,0.8);}
             .player-modal-header{display:flex;align-items:center;gap:15px;margin-bottom:25px;}
+            .player-modal-scroll{flex:1;overflow-y:auto;padding:30px 25px 35px;scrollbar-width:none;}
+            .player-modal-scroll::-webkit-scrollbar{display:none;}
             .player-avatar-img{width:62px;height:62px;border-radius:50%;border:2.5px solid #9b59b6;box-shadow:0 0 12px rgba(155,89,182,0.4);object-fit:cover;flex-shrink:0;}
             .player-name{font-size:20px;font-weight:700;} .player-status{font-size:12px;margin-top:5px;}
             .player-section{margin-bottom:18px;} .section-label{font-size:11px;font-weight:600;color:#c084fc;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
@@ -408,8 +524,9 @@ function showMiniProfile(player) {
 
     const statusColor = { active: '#39d98a', recent: '#f5a623', offline: '#6c6f78' }[player.status] || '#6c6f78';
     const statusLabel = { active: 'Active now', recent: `Active ${player.lastActive}`, offline: 'Offline' }[player.status];
+    player.games = (player.games || []).map(displayGameName);
     const gamesStr    = (player.games || []).join(' · ');
-    const initials    = player.gamertag.slice(0, 2).toUpperCase();
+    const avatarSrc   = dicebearAvatar(player.avatarSeed || player.gamertag);
 
     activeMiniPopup = new maplibregl.Popup({
         closeButton: false, closeOnClick: true, offset: [0, -20], maxWidth: '300px'
@@ -418,7 +535,7 @@ function showMiniProfile(player) {
         .setHTML(`
             <div class="mini-profile-inner">
                 <div class="mini-profile-header">
-                    <div class="mini-profile-avatar">${initials}</div>
+                    <img src="${avatarSrc}" class="mini-profile-avatar" alt="${player.gamertag}">
                     <div>
                         <div class="mini-profile-name">${player.gamertag}</div>
                         <div class="mini-profile-status" style="color:${statusColor}">&#9679; ${statusLabel}</div>
@@ -436,6 +553,7 @@ function showMiniProfile(player) {
                 <div class="mini-profile-divider"></div>
                 <div class="mini-profile-games">${gamesStr}</div>
                 <button class="mini-profile-btn" onclick="window._openFullProfile(${player.id})">View Full Profile</button>
+                <div class="map-friend-actions">${mapFriendActions(player)}</div>
             </div>`)
         .addClassName('mini-profile-popup')
         .addTo(map);
@@ -450,7 +568,7 @@ function showMiniProfile(player) {
             .mini-profile-popup .maplibregl-popup-close-button{display:none!important;}
             .mini-profile-inner{display:flex;flex-direction:column;gap:12px;}
             .mini-profile-header{display:flex;align-items:center;gap:14px;}
-            .mini-profile-avatar{width:50px;height:50px;border-radius:8px;background:linear-gradient(135deg,#1e3a5f,#2563eb);border:1.5px solid rgba(96,165,250,0.4);display:flex;align-items:center;justify-content:center;font-size:18px;font-weight:800;color:#e0f2fe;flex-shrink:0;}
+            .mini-profile-avatar{width:50px;height:50px;border-radius:50%;border:1.5px solid rgba(96,165,250,0.4);object-fit:cover;flex-shrink:0;background:#0f1923;}
             .mini-profile-name{font-size:17px;font-weight:800;color:#f0f9ff;font-family:'Orbitron',sans-serif;letter-spacing:0.5px;}
             .mini-profile-status{font-size:12px;margin-top:3px;font-weight:700;}
             .mini-profile-divider{height:1px;background:rgba(96,165,250,0.15);}
@@ -497,7 +615,7 @@ function showEventPopup(player, evt) {
 
     const timeStr     = fmtTime(evt.startHour, evt.startMin, evt.startAmPm);
     const endStr      = evt.hasEnd ? ` – ${fmtTime(evt.endHour, evt.endMin, evt.endAmPm)}` : ' · 2hr';
-    const avatarSrc   = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}`;
+    const avatarSrc   = dicebearAvatar(player.avatarSeed || player.gamertag);
     const statusColor = { active: '#39d98a', recent: '#f5a623', offline: '#6c6f78' }[player.status] || '#6c6f78';
 
     activeEventPopup = new maplibregl.Popup({
@@ -569,8 +687,9 @@ function handleMenuClick(page) {
         case 'home':          map.invalidateSize(); break;
         case 'chat':          window.location.href = '/chat'; break;          // UPDATED
         case 'notifications': alert('Notifications coming soon'); break;
-        case 'settings':      alert('Settings coming soon'); break;
+        case 'settings': openModalPage('/settings'); break;     
         case 'login':         isLoggedIn ? handleLogout() : openModalPage('/login'); break; // UPDATED
+        case 'settings': openModalPage('/settings', true); break;       
     }
 }
 
@@ -736,6 +855,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateLoginLogoutButton();
     checkSession();
+setInterval(() => { sendMapPresence(); loadLivePlayers(); }, 8000);
     checkAdmin();         // show admin panel for admins
     initEventSystem();    // event creation button + form
     initCustomSelects();  // custom glassy dropdowns
@@ -905,6 +1025,7 @@ function buildTimePicker(initH = 8, initM = 0, initAmPm = 'PM') {
 }
 
 
+//  initEventSystem 
 // Injects the green "+" button and the event creation form overlay into the map area.
 // Also wires up submit logic and draws initial pulse rings for demo events.
 
@@ -919,99 +1040,66 @@ function initEventSystem() {
     addBtn.title     = 'Create Event';
     mapArea.appendChild(addBtn);
 
-    addBtn.onclick = () => window.openDynamicEventForm();
+    // Form overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'event-form-overlay';
+    overlay.id        = 'eventFormOverlay';
+    overlay.innerHTML = `
+        <div class="event-form-card">
+            <button class="event-form-close" id="eventFormClose">✕</button>
+            <div class="event-form-title">Create Event</div>
+            <div class="event-form-subtitle">Let nearby players find and join you</div>
+            <div class="event-form-error" id="eventFormError"></div>
+            <div class="event-field"><label>Event Name</label><input class="event-input" id="evtName" type="text" placeholder="e.g. Friday Ranked Grind"></div>
+            <div class="event-field"><label>Game</label><input class="event-input" id="evtGame" type="text" placeholder="e.g. Valorant, CS2, Minecraft"></div>
+            <div class="event-field"><label>Start Time</label><div id="evtStartPicker"></div></div>
+            <div class="event-field">
+                <label>End Time <span class="event-label-note">(optional)</span></label>
+                <div id="evtEndPicker"></div>
+                <p class="event-field-note">Leave unchanged and the event auto-closes after 2 hours.</p>
+            </div>
+            <button class="event-submit-btn" id="eventSubmitBtn">Start Event</button>
+        </div>`;
+    mapArea.appendChild(overlay);
+
+    // Helpers
+    function to24mins(h, m, ap) {
+        let hour = h % 12;
+        if (ap === 'PM') hour += 12;
+        return hour * 60 + m;
+    }
+    function nowRounded() {
+        const now = new Date();
+        let h = now.getHours(), m = Math.ceil(now.getMinutes() / 5) * 5;
+        if (m === 60) { m = 0; h = (h + 1) % 24; }
+        return { h12: h % 12 || 12, m, ap: h >= 12 ? 'PM' : 'AM', totalMins: h * 60 + m };
+    }
+    function addMins(total, add) {
+        const t   = (total + add) % 1440;
+        const h24 = Math.floor(t / 60);
+        return { h12: h24 % 12 || 12, m: t % 60, ap: h24 >= 12 ? 'PM' : 'AM' };
+    }
+
+    const seed    = nowRounded();
+    const endSeed = addMins(seed.totalMins, 120);
+    const endMr   = Math.round(endSeed.m / 5) * 5 % 60;
+
+    const startPicker = buildTimePicker(seed.h12, seed.m, seed.ap);
+    const endPicker   = buildTimePicker(endSeed.h12, endMr, endSeed.ap);
+    document.getElementById('evtStartPicker').appendChild(startPicker.el);
+    document.getElementById('evtEndPicker').appendChild(endPicker.el);
+
+    // Open / close
+    addBtn.addEventListener('click', () => {
+        if (!isLoggedIn) { alert('Please login first to create an event'); openModalPage('/login'); return; } // UPDATED
+        overlay.classList.add('show');
+    });
+    document.getElementById('eventFormClose').addEventListener('click', () => overlay.classList.remove('show'));
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('show'); });
+
+   /* // Submit
     
-    window.openDynamicEventForm = function() {
-        // 1. Kolla om användaren är inloggad först
-        if (!isLoggedIn) { 
-            alert('Please login first to create an event'); 
-            openModalPage('/login'); 
-            return; 
-        }   
-        if (document.getElementById('eventFormOverlay')) return;
-
-        // Helpers
-        function to24mins(h, m, ap) {
-            let hour = h % 12;
-            if (ap === 'PM') hour += 12;
-            return hour * 60 + m;
-        }
-        function nowRounded() {
-            const now = new Date();
-            let h = now.getHours(), m = Math.ceil(now.getMinutes() / 5) * 5;
-            if (m === 60) { m = 0; h = (h + 1) % 24; }
-            return { h12: h % 12 || 12, m, ap: h >= 12 ? 'PM' : 'AM', totalMins: h * 60 + m };
-        }
-        function addMins(total, add) {
-            const t   = (total + add) % 1440;
-            const h24 = Math.floor(t / 60);
-            return { h12: h24 % 12 || 12, m: t % 60, ap: h24 >= 12 ? 'PM' : 'AM' };
-        }
-
-        const seed    = nowRounded();
-        const endSeed = addMins(seed.totalMins, 120);
-        const endMr   = Math.round(endSeed.m / 5) * 5 % 60;
-        
-        // Form overlay
-        const overlay = document.createElement('div');
-        overlay.className = 'event-form-overlay show';
-        overlay.id = 'eventFormOverlay';
-        overlay.innerHTML = `
-            <div class="event-form-card">
-                <button class="event-form-close" id="eventFormClose">✕</button>
-
-                <div class="event-form-title">Create Event</div>
-                <div class="event-form-subtitle">Let nearby players find and join you</div>
-                <div class="event-form-error" id="eventFormError" style="color: #fca5a5; display: none; font-size: 13px; margin-bottom: 10px;"></div>
-                
-                <div class="event-field">
-                    <label>Event Name *</label>
-                    <input class="event-input" id="evtName" type="text" placeholder="e.g. Friday Ranked Grind">
-                </div>
-                
-                <div class="event-field" style="position: relative;">
-                    <label>Game (Steam Live Search) *</label>
-                    <input class="event-input" id="evtGame" type="text" placeholder="e.g. Valorant, CS2, Minecraft">
-                    <input type="hidden" id="evtAppid" value="">
-                    <div id="evtSteamResults" class="steam-results" style="display: none; position: absolute; width: 100%; max-height: 200px; overflow-y: auto; z-index: 1000; background: #1e1f22; border: 1px solid rgba(155,89,182,0.4); border-radius: 8px; margin-top: 5px;"></div>
-                </div>
-
-                <div class="event-field">
-                    <label>Description</label>
-                    <textarea class="edit-input" id="evtDesc" rows="2" placeholder="What are we doing?" style="width:100%; font-family:inherit; background: rgba(30,31,34,0.7); border: 1px solid rgba(255,255,255,0.1); color: #fff; padding: 8px; border-radius: 6px; resize: none;"></textarea>
-                </div>
-
-                <div style="display: flex; gap: 10px;">
-                    <div class="event-field" style="flex: 1;">
-                        <label>Min Rank</label>
-                        <input class="event-input" id="evtMinRank" type="text" placeholder="e.g. Gold">
-                    </div>
-                    <div class="event-field" style="flex: 1;">
-                        <label>Max Rank</label>
-                        <input class="event-input" id="evtMaxRank" type="text" placeholder="e.g. Global">
-                    </div>
-                </div>
-                
-                <div class="event-field">
-                    <label>Start Time *</label>
-                    <div id="evtStartPicker"></div>
-                </div>
-
-                <div class="event-field">
-                    <label>End Time <span class="event-label-note">(optional)</span></label>
-                    <div id="evtEndPicker"></div>
-                    <p class="event-field-note" style="font-size: 11px; color: #aaa; margin-top: 4px;">Leave unchanged and the event auto-closes after 2 hours.</p>
-                </div>
-
-                <button class="event-submit-btn" id="eventSubmitBtn" style="margin-top: 15px;">Start Event</button>
-            </div>`;
-        mapArea.appendChild(overlay);
-
-        const startPicker = buildTimePicker(seed.h12, seed.m, seed.ap);
-        const endPicker   = buildTimePicker(endSeed.h12, endMr, endSeed.ap);
-        document.getElementById('evtStartPicker').appendChild(startPicker.el);
-        document.getElementById('evtEndPicker').appendChild(endPicker.el);
-
+// DE
         const closeBtn    = document.getElementById('eventFormClose');
         const gameInput   = document.getElementById('evtGame');
         const resultsDiv  = document.getElementById('evtSteamResults');
@@ -1184,12 +1272,15 @@ function initEventSystem() {
             }
         };
     };
+    // Draw initial pulse rings once the map markers are ready
+    map.on('load', () => setTimeout(refreshEventMarkers, 500));
+    if (map.loaded()) setTimeout(refreshEventMarkers, 300);
+//DE
 }
 
-    
+
 // Redraws pulse rings on all players who currently have an active event.
 // Rings are injected into the avatar marker element so they stay centred on pan/zoom.
-
 function refreshEventMarkers() {
     // Clear all existing pulse rings
     Object.values(playerMarkers).forEach(({ el }) => el.querySelectorAll('.pulse-ring').forEach(r => r.remove()));
@@ -1199,7 +1290,6 @@ function refreshEventMarkers() {
     activeEvents.forEach(evt => {
         const player = window.currentPlayersForMap().find(p => p.id === evt.playerId);
         if (!player) return;
-
         const markerData = playerMarkers[player.id];
         if (!markerData) return;
 
@@ -1208,15 +1298,12 @@ function refreshEventMarkers() {
             const ring       = document.createElement('div');
             ring.className   = 'pulse-ring' + (cls ? ' ' + cls : '');
             markerData.el.insertBefore(ring, markerData.el.firstChild);
-        })
+        });
 
         pulseMarkers[player.id] = {
             remove: () => {
-                if (playerMarkers[player.id]){
-                    playerMarkers[player.id].el
-                    .querySelectorAll('.pulse-ring')
-                    .forEach(r => r.remove());
-                }
+                if (playerMarkers[player.id])
+                    playerMarkers[player.id].el.querySelectorAll('.pulse-ring').forEach(r => r.remove());
             }
         };
     });
