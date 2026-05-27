@@ -206,7 +206,7 @@ async function loadLivePlayers() {
 // UPDATED: URLs now use Flask routes (/login, /register, /profile) instead
 // of the old flat-file paths (login/login.html, etc.).
 
-function openModalPage(page) {
+function openModalPage(page, wide = false) {
     let overlay = document.getElementById('modalOverlay');
     if (!overlay) {
         overlay           = document.createElement('div');
@@ -222,6 +222,8 @@ function openModalPage(page) {
         frame.className = 'modal-frame';
         document.body.appendChild(frame);
     }
+    // Toggle the wide class based on the caller's request
+    frame.classList.toggle('wide', wide);
     frame.src = page;
     overlay.classList.add('show');
     frame.classList.add('show');
@@ -667,8 +669,9 @@ function handleMenuClick(page) {
         case 'home':          map.invalidateSize(); break;
         case 'chat':          window.location.href = '/chat'; break;          // UPDATED
         case 'notifications': alert('Notifications coming soon'); break;
-        case 'settings':      alert('Settings coming soon'); break;
+        case 'settings': openModalPage('/settings'); break;     
         case 'login':         isLoggedIn ? handleLogout() : openModalPage('/login'); break; // UPDATED
+        case 'settings': openModalPage('/settings', true); break;       
     }
 }
 
