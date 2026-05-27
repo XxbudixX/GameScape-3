@@ -104,7 +104,10 @@ async function checkSession() {
     try {
         const res  = await fetch('/api/me', { credentials: 'same-origin' });
         const data = await res.json();
-        if (data.logged_in) setLoggedIn(true, data.username);
+        if (data.logged_in) {
+            window.myUserId = data.user_id;
+            setLoggedIn(true, data.username);
+}
     } catch (e) { console.warn('Session check failed:', e); }
 }
 
@@ -1150,12 +1153,13 @@ function initEventSystem() {
                 }
 
                 // Om databasen accepterade anropet -> Uppdatera den lokala frontend-kartan
-                const demo = PLAYERS.find(p => p.isDemo);
-                const demoId = demo ? demo.id : 99;
+                const myId = window.myUserId;
+                if (!myId) 
+                    { alert("Missing user id"); return; }
 
-                activeEvents = activeEvents.filter(e => e.playerId !== demoId);
+                activeEvents = activeEvents.filter(e => e.playerId !== myId);
                 activeEvents.push({
-                    playerId: demoId,
+                    playerId: myId,
                     eventName: title,
                     gameName: gameInput.value.trim(),
                     startHour: startH,
@@ -1249,10 +1253,11 @@ function initMapWebSocket() {
         if (msg.type === 'players_snapshot') {
             const incoming = msg.players || [];
             if (incoming.length > 0) {
-                
-                    window.livePlayers = spreadOverlappingPlayers(incoming).map(p => ({ ...p, mapVisible: true }));
+                window.livePlayers = spreadOverlappingPlayers(incoming).map(p => ({ ...p, mapVisible: true }));
+
+
                 renderMapMarkers(window.currentPlayersForMap());
-                if (typeof refreshEventMarkers === 'function') refreshEventMarkers();
+                refreshEventMarkers?.();
             } else {
                 console.warn('[map ws] snapshot empty (keeping demo)');
             }
