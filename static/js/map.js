@@ -155,7 +155,7 @@ async function checkSession() {
         if (data.logged_in) {
             window.myUserId = data.user_id;
             setLoggedIn(true, data.username, data.avatar_seed);
-}
+        }
     } catch (e) { console.warn('Session check failed:', e); }
 }
 
@@ -855,7 +855,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateLoginLogoutButton();
     checkSession();
-setInterval(() => { sendMapPresence(); loadLivePlayers(); }, 8000);
+    setInterval(() => { sendMapPresence(); loadLivePlayers(); }, 8000);
     checkAdmin();         // show admin panel for admins
     initEventSystem();    // event creation button + form
     initCustomSelects();  // custom glassy dropdowns
@@ -1028,92 +1028,125 @@ function buildTimePicker(initH = 8, initM = 0, initAmPm = 'PM') {
 //  initEventSystem 
 // Injects the green "+" button and the event creation form overlay into the map area.
 // Also wires up submit logic and draws initial pulse rings for demo events.
-
 function initEventSystem() {
     const mapArea = document.querySelector('.map-area');
     if (!mapArea) return;
 
     // + button
-    const addBtn   = document.createElement('button');
+    const addBtn = document.createElement('button');
     addBtn.className = 'event-add-btn';
     addBtn.innerHTML = '+';
-    addBtn.title     = 'Create Event';
+    addBtn.title = 'Create Event';
     mapArea.appendChild(addBtn);
 
-    // Form overlay
-    const overlay = document.createElement('div');
-    overlay.className = 'event-form-overlay';
-    overlay.id        = 'eventFormOverlay';
-    overlay.innerHTML = `
-        <div class="event-form-card">
-            <button class="event-form-close" id="eventFormClose">✕</button>
-            <div class="event-form-title">Create Event</div>
-            <div class="event-form-subtitle">Let nearby players find and join you</div>
-            <div class="event-form-error" id="eventFormError"></div>
-            <div class="event-field"><label>Event Name</label><input class="event-input" id="evtName" type="text" placeholder="e.g. Friday Ranked Grind"></div>
-            <div class="event-field"><label>Game</label><input class="event-input" id="evtGame" type="text" placeholder="e.g. Valorant, CS2, Minecraft"></div>
-            <div class="event-field"><label>Start Time</label><div id="evtStartPicker"></div></div>
-            <div class="event-field">
-                <label>End Time <span class="event-label-note">(optional)</span></label>
-                <div id="evtEndPicker"></div>
-                <p class="event-field-note">Leave unchanged and the event auto-closes after 2 hours.</p>
+    addBtn.onclick = () => window.openDynamicEventForm();
+
+    window.openDynamicEventForm = function () {
+        if (!isLoggedIn) {
+            alert('Please login first to create an event');
+            openModalPage('/login');
+            return;
+        }
+        if (document.getElementById('eventFormOverlay')) return;
+
+        // Helpers
+        function to24mins(h, m, ap) {
+            let hour = h % 12;
+            if (ap === 'PM') hour += 12;
+            return hour * 60 + m;
+        }
+        function nowRounded() {
+            const now = new Date();
+            let h = now.getHours(), m = Math.ceil(now.getMinutes() / 5) * 5;
+            if (m === 60) { m = 0; h = (h + 1) % 24; }
+            return { h12: h % 12 || 12, m, ap: h >= 12 ? 'PM' : 'AM', totalMins: h * 60 + m };
+        }
+        function addMins(total, add) {
+            const t = (total + add) % 1440;
+            const h24 = Math.floor(t / 60);
+            return { h12: h24 % 12 || 12, m: t % 60, ap: h24 >= 12 ? 'PM' : 'AM' };
+        }
+
+        const seed = nowRounded();
+        const endSeed = addMins(seed.totalMins, 120);
+        const endMr = Math.round(endSeed.m / 5) * 5 % 60;
+
+        // Overlay
+        const overlay = document.createElement('div');
+        overlay.className = 'event-form-overlay show';
+        overlay.id = 'eventFormOverlay';
+        overlay.innerHTML = `
+            <div class="event-form-card">
+                <button class="event-form-close" id="eventFormClose">✕</button>
+
+                <div class="event-form-title">Create Event</div>
+                <div class="event-form-subtitle">Let nearby players find and join you</div>
+                <div class="event-form-error" id="eventFormError" style="color:#fca5a5; display:none; font-size:13px; margin-bottom:10px;"></div>
+
+                <div class="event-field">
+                    <label>Event Name *</label>
+                    <input class="event-input" id="evtName" type="text" placeholder="e.g. Friday Ranked Grind">
+                </div>
+
+                <div class="event-field" style="position: relative;">
+                    <label>Game (Steam Live Search) *</label>
+                    <input class="event-input" id="evtGame" type="text" placeholder="e.g. Valorant, CS2, Minecraft">
+                    <input type="hidden" id="evtAppid" value="">
+                    <div id="evtSteamResults" class="steam-results" style="display:none; position:absolute; width:100%; max-height:200px; overflow-y:auto; z-index:1000; background:#1e1f22; border:1px solid rgba(155,89,182,0.4); border-radius:8px; margin-top:5px;"></div>
+                </div>
+
+                <div class="event-field">
+                    <label>Description</label>
+                    <textarea class="edit-input" id="evtDesc" rows="2"
+                        placeholder="What are we doing?"
+                        style="width:100%; font-family:inherit; background:rgba(30,31,34,0.7); border:1px solid rgba(255,255,255,0.1); color:#fff; padding:8px; border-radius:6px; resize:none;"></textarea>
+                </div>
+
+                <div style="display:flex; gap:10px;">
+                    <div class="event-field" style="flex:1;">
+                        <label>Min Rank</label>
+                        <input class="event-input" id="evtMinRank" type="text" placeholder="e.g. Gold">
+                    </div>
+                    <div class="event-field" style="flex:1;">
+                        <label>Max Rank</label>
+                        <input class="event-input" id="evtMaxRank" type="text" placeholder="e.g. Global">
+                    </div>
+                </div>
+
+                <div class="event-field">
+                    <label>Start Time *</label>
+                    <div id="evtStartPicker"></div>
+                </div>
+
+                <div class="event-field">
+                    <label>End Time <span class="event-label-note">(optional)</span></label>
+                    <div id="evtEndPicker"></div>
+                    <p class="event-field-note" style="font-size:11px; color:#aaa; margin-top:4px;">
+                        Leave unchanged and the event auto-closes after 2 hours.
+                    </p>
+                </div>
+
+                <button class="event-submit-btn" id="eventSubmitBtn" style="margin-top:15px;">Start Event</button>
             </div>
-            <button class="event-submit-btn" id="eventSubmitBtn">Start Event</button>
-        </div>`;
-    mapArea.appendChild(overlay);
+        `;
+        mapArea.appendChild(overlay);
 
-    // Helpers
-    function to24mins(h, m, ap) {
-        let hour = h % 12;
-        if (ap === 'PM') hour += 12;
-        return hour * 60 + m;
-    }
-    function nowRounded() {
-        const now = new Date();
-        let h = now.getHours(), m = Math.ceil(now.getMinutes() / 5) * 5;
-        if (m === 60) { m = 0; h = (h + 1) % 24; }
-        return { h12: h % 12 || 12, m, ap: h >= 12 ? 'PM' : 'AM', totalMins: h * 60 + m };
-    }
-    function addMins(total, add) {
-        const t   = (total + add) % 1440;
-        const h24 = Math.floor(t / 60);
-        return { h12: h24 % 12 || 12, m: t % 60, ap: h24 >= 12 ? 'PM' : 'AM' };
-    }
+        const startPicker = buildTimePicker(seed.h12, seed.m, seed.ap);
+        const endPicker = buildTimePicker(endSeed.h12, endMr, endSeed.ap);
+        document.getElementById('evtStartPicker').appendChild(startPicker.el);
+        document.getElementById('evtEndPicker').appendChild(endPicker.el);
 
-    const seed    = nowRounded();
-    const endSeed = addMins(seed.totalMins, 120);
-    const endMr   = Math.round(endSeed.m / 5) * 5 % 60;
+        const closeBtn = document.getElementById('eventFormClose');
+        const gameInput = document.getElementById('evtGame');
+        const resultsDiv = document.getElementById('evtSteamResults');
+        const submitBtn = document.getElementById('eventSubmitBtn');
+        const appidInput = document.getElementById('evtAppid');
+        const errorDiv = document.getElementById('eventFormError');
 
-    const startPicker = buildTimePicker(seed.h12, seed.m, seed.ap);
-    const endPicker   = buildTimePicker(endSeed.h12, endMr, endSeed.ap);
-    document.getElementById('evtStartPicker').appendChild(startPicker.el);
-    document.getElementById('evtEndPicker').appendChild(endPicker.el);
-
-    // Open / close
-    addBtn.addEventListener('click', () => {
-        if (!isLoggedIn) { alert('Please login first to create an event'); openModalPage('/login'); return; } // UPDATED
-        overlay.classList.add('show');
-    });
-    document.getElementById('eventFormClose').addEventListener('click', () => overlay.classList.remove('show'));
-    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('show'); });
-
-   /* // Submit
-    
-// DE
-        const closeBtn    = document.getElementById('eventFormClose');
-        const gameInput   = document.getElementById('evtGame');
-        const resultsDiv  = document.getElementById('evtSteamResults');
-        const submitBtn   = document.getElementById('eventSubmitBtn');
-        const appidInput  = document.getElementById('evtAppid');
-        const errorDiv    = document.getElementById('eventFormError');
-
-
-        // Stäng-knappen
         closeBtn.onclick = () => overlay.remove();
         overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
 
-        
-        // Steam Real-time sökning
+        // Steam live search
         let searchTimer = null;
         gameInput.addEventListener('input', () => {
             clearTimeout(searchTimer);
@@ -1122,6 +1155,7 @@ function initEventSystem() {
             if (query.length < 2) {
                 resultsDiv.innerHTML = '';
                 resultsDiv.style.display = 'none';
+                appidInput.value = '';
                 return;
             }
 
@@ -1130,73 +1164,67 @@ function initEventSystem() {
                     const res = await fetch(`/api/steam/search?q=${encodeURIComponent(query)}`);
                     const data = await res.json();
 
-                    if (data.success && data.results.length > 0) {
-                        resultsDiv.style.display = 'block';
+                    resultsDiv.style.display = 'block';
+                    if (data.success && (data.results || []).length > 0) {
                         resultsDiv.innerHTML = data.results.map(game => {
-                            const escapedName = game.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+                            const escapedName = String(game.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
                             return `
-                            <div class="steam-result-row" style="padding: 8px; display: flex; align-items: center; gap: 10px; cursor: pointer;" onclick="selectSteamGameForEvent(${game.appid}, '${escapedName}')">
-                                <img src="${game.icon_url}" width="32" height="32" style="border-radius: 4px; object-fit: cover;">
-                                <div>
-                                    <div style="font-size: 14px; color: #fff;">${game.name}</div>
-                                </div>
-                            </div>`;
+                                <div class="steam-result-row"
+                                     style="padding:8px; display:flex; align-items:center; gap:10px; cursor:pointer;"
+                                     onclick="selectSteamGameForEvent(${game.appid}, '${escapedName}')">
+                                    <img src="${game.icon_url}" width="32" height="32" style="border-radius:4px; object-fit:cover;">
+                                    <div style="font-size:14px; color:#fff;">${game.name}</div>
+                                </div>`;
                         }).join('');
                     } else {
-                        resultsDiv.innerHTML = '<div style="padding: 8px; color: #aaa; font-size:12px;">No games found</div>';
-                        resultsDiv.style.display = 'block';
+                        resultsDiv.innerHTML = '<div style="padding:8px; color:#aaa; font-size:12px;">No games found</div>';
                     }
                 } catch (err) {
-                    console.error("Steam search error:", err);
+                    console.error('Steam search error:', err);
                 }
             }, 400);
         });
 
-        // Funktion för när man klickar på ett spel i sökresultatet
-        window.selectSteamGameForEvent = function(appid, name) {
-            gameInput.value = name;      
-            appidInput.value = appid;    
-            resultsDiv.innerHTML = '';   
+        window.selectSteamGameForEvent = function (appid, name) {
+            gameInput.value = name;
+            appidInput.value = appid;
+            resultsDiv.innerHTML = '';
             resultsDiv.style.display = 'none';
         };
 
-        // Göm sökresultat om man klickar utanför
         document.addEventListener('click', (e) => {
             if (e.target !== gameInput && e.target !== resultsDiv) {
                 resultsDiv.style.display = 'none';
             }
         });
 
-
-        // Submit/Spara eventet till backend
+        // Submit -> backend
         submitBtn.onclick = async () => {
-            const title       = document.getElementById('evtName').value.trim();
-            const appid       = appidInput.value;
+            const title = document.getElementById('evtName').value.trim();
+            const appid = appidInput.value;
             const description = document.getElementById('evtDesc').value.trim();
-            const min_rank    = document.getElementById('evtMinRank').value.trim();
-            const max_rank    = document.getElementById('evtMaxRank').value.trim();
+            const min_rank = document.getElementById('evtMinRank').value.trim();
+            const max_rank = document.getElementById('evtMaxRank').value.trim();
 
             if (!title || !appid) {
-                errorDiv.textContent = "Please fill in Event Name and select a game from the Steam list.";
-                errorDiv.style.display = "block";
-                return;
-            }
-
-            const startH  = startPicker.getHour(), startM  = startPicker.getMin(), startAp = startPicker.getAmPm();
-            const endH    = endPicker.getHour(),   endM    = endPicker.getMin(),   endAp   = endPicker.getAmPm();
-
-            const nowMins   = new Date().getHours() * 60 + new Date().getMinutes();
-            const startMins = to24mins(startH, startM, startAp);
-
-            if (startMins < nowMins) {
-                errorDiv.textContent = `Start time is in the past.`;
+                errorDiv.textContent = 'Please fill in Event Name and select a game from the Steam list.';
                 errorDiv.style.display = 'block';
                 return;
             }
 
-            const endMins  = to24mins(endH, endM, endAp);
-            const hasEnd   = !(endH === endSeed.h12 && endM === endMr && endAp === endSeed.ap);
-            
+            const startH = startPicker.getHour(), startM = startPicker.getMin(), startAp = startPicker.getAmPm();
+            const endH = endPicker.getHour(), endM = endPicker.getMin(), endAp = endPicker.getAmPm();
+
+            const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
+            const startMins = to24mins(startH, startM, startAp);
+            if (startMins < nowMins) {
+                errorDiv.textContent = 'Start time is in the past.';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            const endMins = to24mins(endH, endM, endAp);
+            const hasEnd = !(endH === endSeed.h12 && endM === endMr && endAp === endSeed.ap);
             if (hasEnd && endMins <= startMins) {
                 errorDiv.textContent = 'End time must be after the start time.';
                 errorDiv.style.display = 'block';
@@ -1206,9 +1234,10 @@ function initEventSystem() {
             errorDiv.style.display = 'none';
 
             const now = new Date();
-            let startHour24 = (startAp === 'AM') ? (startH === 12 ? 0 : startH) : (startH === 12 ? 12 : startH + 12);
-            
-            // Generera korrekt tids-sträng till din backend
+            const startHour24 = (startAp === 'AM')
+                ? (startH === 12 ? 0 : startH)
+                : (startH === 12 ? 12 : startH + 12);
+
             const startDate = new Date(
                 now.getFullYear(),
                 now.getMonth(),
@@ -1219,8 +1248,8 @@ function initEventSystem() {
 
             const payload = {
                 title,
-                appid: parseInt(appid),
-                datetime: startDate.toISOString(), // Skickar ISO-sträng istället för det saknade input-fältet
+                appid: parseInt(appid, 10),
+                datetime: startDate.toISOString(),
                 description,
                 min_rank: min_rank || null,
                 max_rank: max_rank || null
@@ -1235,15 +1264,13 @@ function initEventSystem() {
                 const resData = await response.json();
 
                 if (!response.ok) {
-                    errorDiv.textContent = resData.error || "Failed to create event.";
-                    errorDiv.style.display = "block";
+                    errorDiv.textContent = resData.error || 'Failed to create event.';
+                    errorDiv.style.display = 'block';
                     return;
                 }
 
-                // Om databasen accepterade anropet -> Uppdatera den lokala frontend-kartan
                 const myId = window.myUserId;
-                if (!myId) 
-                    { alert("Missing user id"); return; }
+                if (!myId) { alert('Missing user id'); return; }
 
                 activeEvents = activeEvents.filter(e => e.playerId !== myId);
                 activeEvents.push({
@@ -1258,24 +1285,21 @@ function initEventSystem() {
                     endMin: endM,
                     endAmPm: endAp
                 });
-                
+
                 overlay.remove();
-
-                if (typeof refreshEventMarkers === 'function') refreshEventMarkers();
-                if (typeof loadAdminEvents === 'function') loadAdminEvents();
-                
+                refreshEventMarkers?.();
+                loadAdminEvents?.();
                 alert('Event created successfully!');
-
             } catch (err) {
-                errorDiv.textContent = err.message || "Server error connection failed.";
-                errorDiv.style.display = "block";
+                errorDiv.textContent = err.message || 'Server error connection failed.';
+                errorDiv.style.display = 'block';
             }
         };
     };
-    // Draw initial pulse rings once the map markers are ready
+
+    // Draw initial rings when markers exist
     map.on('load', () => setTimeout(refreshEventMarkers, 500));
     if (map.loaded()) setTimeout(refreshEventMarkers, 300);
-//DE
 }
 
 
