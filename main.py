@@ -530,7 +530,8 @@ def save_settings():
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
-        cur.close(); conn.close()
+        cur.close();
+        conn.close()
 
         title = data.get('title')
         #game_id = data.get('game_id')
