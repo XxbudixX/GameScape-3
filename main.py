@@ -1,3 +1,6 @@
+from gevent import monkey
+monkey.patch_all()
+
 from flask import Flask, request, jsonify, session, send_from_directory
 from databas import connect_db
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -18,6 +21,7 @@ try:
 except ImportError:
     SOCK_AVAILABLE = False
     print("WARNING: flask_sock not installed. Run: pip install flask-sock")
+print("SOCK_AVAILABLE =", SOCK_AVAILABLE)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -29,6 +33,7 @@ app.secret_key = "hemlig_nyckel"
 if SOCK_AVAILABLE:
     sock = Sock(app)
 connected_users = {}
+connected_map_clients = set()
 
 STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E'
 
@@ -1458,6 +1463,75 @@ if SOCK_AVAILABLE:
                 connected_users.pop(username, None)
             print(f'[WS] {username} disconnected. Online: {list(connected_users.keys())}')
 
+# --- Map WebSocket ---
 
-if __name__ == '__main__':
-    app.run(debug=True)
+def fetch_players_for_map():
+    conn, cur = connect_db()
+    if conn is None:
+        return []
+    try:
+        cur.execute("""
+            SELECT user_id, username, status, latitude, longitude, last_active
+            FROM users
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+              AND status != 'invisible'
+        """)
+        rows = cur.fetchall()
+        players = []
+        for r in rows:
+            uid = r[0]
+            cur.execute("""
+                SELECT sg.appid, sg.name, sg.icon_url
+                FROM steam_games sg
+                JOIN user_steam_games usg ON sg.appid = usg.appid
+                WHERE usg.user_id = %s
+                LIMIT 6
+            """, (uid,))
+            games = [{'appid': g[0], 'name': g[1], 'icon_url': g[2]} for g in cur.fetchall()]
+            players.append({
+                'id': uid,
+                'gamertag': r[1],
+                'status': r[2] or 'offline',
+                'lat': float(r[3]),
+                'lng': float(r[4]),
+                'lastActive': str(r[5]) if r[5] else 'Unknown',
+                'games': games,
+            })
+        return players
+    except Exception as e:
+        print("fetch_players_for_map error:", e)
+        return []
+    finally:
+        cur.close()
+        conn.close()
+
+if SOCK_AVAILABLE:
+    @sock.route('/ws/map')
+    def ws_map(ws):
+        connected_map_clients.add(ws)
+        print("[WS map] sending snapshot")
+        print("[WS map] client connected")
+        try:
+            ws.send(json.dumps({
+                'type': 'players_snapshot',
+                'players': fetch_players_for_map()
+            }))
+            print("[WS map] snapshot sent")
+            while True:
+                raw = ws.receive()
+                if raw is None:
+                    break
+        except Exception as e:
+            print("[WS map] error:", e)
+        finally:
+            connected_map_clients.discard(ws)
+            print("[WS map] client disconnected")     
+
+
+if __name__ == "__main__":
+    if SOCK_AVAILABLE:
+        from gevent.pywsgi import WSGIServer
+        print("[server] gevent on http://127.0.0.1:5000")
+        WSGIServer(("127.0.0.1", 5000), app).serve_forever()
+    else:
+        app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
