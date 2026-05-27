@@ -533,48 +533,6 @@ def save_settings():
         cur.close();
         conn.close()
 
-        title = data.get('title')
-        #game_id = data.get('game_id')
-        datetime_value = data.get('datetime')
-        description = data.get('description')
-        min_rank = data.get('min_rank')
-        max_rank = data.get('max_rank')
-        #game_name = data.get('game_name')
-        appid = data.get('appid')
-
-        if not title or not appid or not datetime_value:
-            return jsonify({"error": "Missing required fields"}), 400
-        """
-        if not game_row:
-            return jsonify({"error": "Game not found"}), 404
-        
-        game_id = game_row[0]"""
-
-        conn, cur = connect_db()
-
-        cur.execute("""
-            INSERT INTO event 
-            (creator_id, 
-            appid,
-            title, 
-            datetime,
-            description,
-            min_rank,
-            max_rank)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """, (
-        session["user_id"],
-        appid,
-        title,
-        datetime_value,
-        description,
-        min_rank,
-        max_rank
-        ))
-
-        conn.commit()
-        cur.close()
-        conn.close()
     try:
         return jsonify({"message": "Event skapat"})
     except Exception as e:
