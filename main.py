@@ -61,6 +61,10 @@ def profile_page():
 @app.route('/static/<path:filename>')
 def static_files(filename):
     return send_from_directory(os.path.join(ROOT, 'static'), filename)
+    
+@app.route('/settings')
+def settings_page():
+    return send_from_directory(os.path.join(ROOT, 'templates'), 'settings.html')
 
 
 #  Auth 
@@ -253,10 +257,28 @@ def get_players():
               AND COALESCE(status, 'offline') != 'invisible'
         """)
         rows = cur.fetchall()
+
         players = []
         for r in rows:
-            uid = r[0]
-            # Fetch Steam games for each player
+            uid      = r[0]
+            plat     = float(r[3])
+            plng     = float(r[4])
+
+            # Radius filter — only apply if the requesting user has a location
+            if req_lat is not None and req_lng is not None:
+                # Haversine distance in km (pure SQL would be cleaner at scale,
+                # but Python is fine for the current user count)
+                import math
+                dlat  = math.radians(plat - req_lat)
+                dlng  = math.radians(plng - req_lng)
+                a     = (math.sin(dlat / 2) ** 2
+                         + math.cos(math.radians(req_lat))
+                         * math.cos(math.radians(plat))
+                         * math.sin(dlng / 2) ** 2)
+                dist_km = 6371 * 2 * math.asin(math.sqrt(a))
+                if dist_km > radius_km:
+                    continue  # skip players outside the radius
+
             cur.execute("""
                 SELECT sg.appid, sg.name, sg.icon_url
                 FROM steam_games sg
@@ -291,7 +313,6 @@ def get_players():
     finally:
         cur.close(); conn.close()
 
-
 #  Profile 
 # Requires running steam_migration.sql first (adds about_me and interests columns).
 
@@ -301,31 +322,51 @@ def get_profile():
         return jsonify({'success': False, 'error': 'Not logged in'}), 401
     conn, cur = connect_db()
     try:
-        # Ensure all profile columns exist (safe IF NOT EXISTS is a no-op if already present)
+        # Ensure all profile columns exist
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS about_me       TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS interests      TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord        TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_username TEXT")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed    TEXT")
         conn.commit()
 
-        cur.execute(
-            'SELECT username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE user_id = %s',
-            (session['user_id'],)
-        )
+        target_user = request.args.get('user')
+        if target_user:
+            cur.execute(
+                'SELECT user_id, username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE username = %s',
+                (target_user,)
+            )
+        else:
+            cur.execute(
+                'SELECT user_id, username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE user_id = %s',
+                (session['user_id'],)
+            )
         row = cur.fetchone()
-        ensure_presence_columns(cur)
-        cur.execute('SELECT COALESCE(is_invisible,FALSE) FROM users WHERE user_id = %s', (session['user_id'],))
+        if not row:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+
+        row_user_id = row[0]
+
+        # Respect public_profile setting when viewing another user
+        viewing_other = target_user and target_user != session.get('username')
+        if viewing_other:
+            cur.execute("SELECT public_profile FROM users WHERE user_id = %s", (row_user_id,))
+            priv = cur.fetchone()
+            if priv and not priv[0]:
+                return jsonify({'success': False, 'error': 'This profile is private'}), 403
+
+        # Visibility (only relevant for own profile)
+        cur.execute('SELECT COALESCE(is_invisible, FALSE) FROM users WHERE user_id = %s', (row_user_id,))
         visible_row = cur.fetchone()
-        conn.commit()
+
         return jsonify({
             'success':        True,
-            'username':       row[0],
-            'about_me':       row[1] or '',
-            'interests':      row[2] or '',
-            'discord':        row[3] or '',
-            'steam_username': row[4] or '',
-            'avatar_seed':    row[5] or row[0],
+            'username':       row[1],
+            'about_me':       row[2] or '',
+            'interests':      row[3] or '',
+            'discord':        row[4] or '',
+            'steam_username': row[5] or '',
+            'avatar_seed':    row[6] or row[1],
             'visible':        not bool(visible_row[0]) if visible_row else True,
             'is_invisible':   bool(visible_row[0]) if visible_row else False,
         })
@@ -333,7 +374,6 @@ def get_profile():
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
-
 
 @app.route('/api/profile', methods=['POST'])
 def save_profile():
@@ -374,9 +414,119 @@ def save_profile():
 @app.route('/create_event', methods=['POST'])
 def create_event():
     if 'user_id' not in session:
-        return jsonify({'error': "Inte inloggad"}),401
+        return jsonify({'error': 'Inte inloggad'}), 401
     try:
-        data = request.json
+        data          = request.json
+        title         = data.get('title')
+        datetime_value = data.get('datetime')
+        description   = data.get('description')
+        min_rank      = data.get('min_rank')
+        max_rank      = data.get('max_rank')
+        appid         = data.get('appid')
+
+        if not title or not appid or not datetime_value:
+            return jsonify({'error': 'Missing required fields'}), 400
+
+        conn, cur = connect_db()
+        cur.execute("""
+            INSERT INTO event (creator_id, appid, title, datetime, description, min_rank, max_rank)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
+        """, (session['user_id'], appid, title, datetime_value, description, min_rank, max_rank))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'message': 'Event skapat'})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500    
+
+#  Settings 
+@app.route('/api/settings', methods=['GET'])
+def get_settings():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    try:
+        # Add columns safely — no-op if they already exist
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS map_visible    BOOLEAN DEFAULT true")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS show_status    BOOLEAN DEFAULT true")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS public_profile BOOLEAN DEFAULT true")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS msg_permission TEXT    DEFAULT 'everyone'")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS search_radius  INT     DEFAULT 25")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS active_only    BOOLEAN DEFAULT false")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_messages BOOLEAN DEFAULT true")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_friends  BOOLEAN DEFAULT true")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_events   BOOLEAN DEFAULT true")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_announce BOOLEAN DEFAULT true")
+        conn.commit()
+
+        cur.execute("""
+            SELECT map_visible, show_status, public_profile, msg_permission,
+                   search_radius, active_only,
+                   notif_messages, notif_friends, notif_events, notif_announce
+            FROM users WHERE user_id = %s
+        """, (session['user_id'],))
+        row = cur.fetchone()
+        return jsonify({
+            'success':        True,
+            'map_visible':    row[0] if row[0] is not None else True,
+            'show_status':    row[1] if row[1] is not None else True,
+            'public_profile': row[2] if row[2] is not None else True,
+            'msg_permission': row[3] or 'everyone',
+            'search_radius':  row[4] if row[4] is not None else 25,
+            'active_only':    row[5] if row[5] is not None else False,
+            'notif_messages': row[6] if row[6] is not None else True,
+            'notif_friends':  row[7] if row[7] is not None else True,
+            'notif_events':   row[8] if row[8] is not None else True,
+            'notif_announce': row[9] if row[9] is not None else True,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/settings', methods=['POST'])
+def save_settings():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    data = request.get_json()
+    if not data:
+        return jsonify({'success': False, 'error': 'No data'}), 400
+    conn, cur = connect_db()
+    try:
+        cur.execute("""
+            UPDATE users SET
+                map_visible    = %s,
+                show_status    = %s,
+                public_profile = %s,
+                msg_permission = %s,
+                search_radius  = %s,
+                active_only    = %s,
+                notif_messages = %s,
+                notif_friends  = %s,
+                notif_events   = %s,
+                notif_announce = %s
+            WHERE user_id = %s
+        """, (
+            bool(data.get('map_visible',    True)),
+            bool(data.get('show_status',    True)),
+            bool(data.get('public_profile', True)),
+            data.get('msg_permission', 'everyone'),
+            int(data.get('search_radius',   25)),
+            bool(data.get('active_only',    False)),
+            bool(data.get('notif_messages', True)),
+            bool(data.get('notif_friends',  True)),
+            bool(data.get('notif_events',   True)),
+            bool(data.get('notif_announce', True)),
+            session['user_id']
+        ))
+        conn.commit()
+        return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
 
         title = data.get('title')
         #game_id = data.get('game_id')
@@ -420,7 +570,7 @@ def create_event():
         conn.commit()
         cur.close()
         conn.close()
-
+    try:
         return jsonify({"message": "Event skapat"})
     except Exception as e:
         return jsonify({"error":str(e)}) , 500
@@ -1120,6 +1270,15 @@ def chat_send():
         receiver = cur.fetchone()
         if not receiver:
             return jsonify({'success': False, 'error': 'Recipient not found'}), 404
+
+        # Check receiver's message permission setting
+        cur.execute("SELECT msg_permission FROM users WHERE user_id = %s", (receiver[0],))
+        perm_row = cur.fetchone()
+        perm     = perm_row[0] if perm_row else 'everyone'
+        if perm == 'nobody':
+            return jsonify({'success': False, 'error': 'This user is not accepting messages'}), 403
+        # 'friends' enforcement goes here once a friends table exists
+
         ensure_friend_requests_table(cur)
         ensure_message_read_column(cur)
         cur.execute(

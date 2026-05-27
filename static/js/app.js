@@ -1589,7 +1589,227 @@ function initLanding() {
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
 }
+// ══════════════════════════════════════════════════════════
+//  SETTINGS
+//  Paste this entire block at the bottom of app.js,
+//  just ABOVE the existing "Boot" section, then add
+//  initSettings() to the DOMContentLoaded call list.
+// ══════════════════════════════════════════════════════════
 
+function initSettings() {
+    // Guard: only run on the settings page
+    if (!document.querySelector('.gs-sidebar')) return;
+
+    let settings = {}; // mirrors what's in the DB
+
+    // ── Toast helper ─────────────────────────────────────────
+    function showToast() {
+        const t = document.getElementById('settings-toast');
+        if (!t) return;
+        t.style.opacity = '1';
+        clearTimeout(t._timer);
+        t._timer = setTimeout(() => { t.style.opacity = '0'; }, 1800);
+    }
+
+    // ── Load settings from DB on page open ───────────────────
+    async function loadSettings() {
+        try {
+            const res  = await fetch('/api/settings', { credentials: 'same-origin' });
+            const data = await res.json();
+            if (!data.success) return;
+            settings = data;
+            applyToUI(data);
+        } catch (e) { console.warn('Failed to load settings:', e); }
+    }
+
+    // ── Load profile info for Account section display ────────
+    async function loadAccountDisplay() {
+        try {
+            const res  = await fetch('/api/me', { credentials: 'same-origin' });
+            const data = await res.json();
+            if (!data.logged_in) return;
+
+            const username = data.username;
+
+            // Username & avatar seed display
+            const usernameEl = document.getElementById('display-username');
+            const seedEl     = document.getElementById('display-avatar-seed');
+            if (usernameEl) usernameEl.textContent = username;
+            if (seedEl)     seedEl.textContent     = username;
+
+            // Update navbar avatar to match logged-in user
+            const avatarImg = document.querySelector('.avatar-img');
+            if (avatarImg) {
+                avatarImg.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(username)}`;
+                avatarImg.alt = username;
+            }
+
+            // Load profile for Discord / Steam display
+            const profRes  = await fetch('/api/profile', { credentials: 'same-origin' });
+            const profData = await profRes.json();
+            if (profData.success) {
+                const discordEl = document.getElementById('display-discord');
+                const steamEl   = document.getElementById('display-steam');
+                const chipD     = document.getElementById('chip-discord');
+                const chipS     = document.getElementById('chip-steam');
+
+                if (discordEl && profData.discord) {
+                    discordEl.textContent = profData.discord;
+                    if (chipD) { chipD.textContent = 'Linked'; chipD.classList.add('green'); }
+                }
+                if (steamEl && profData.steam_username) {
+                    steamEl.textContent = profData.steam_username;
+                    if (chipS) { chipS.textContent = 'Linked'; chipS.classList.add('green'); }
+                }
+            }
+        } catch (e) { console.warn('Failed to load account display:', e); }
+    }
+
+    // ── Push full state to DB ────────────────────────────────
+    async function saveSettings() {
+        try {
+            const res = await fetch('/api/settings', {
+                method:      'POST',
+                headers:     { 'Content-Type': 'application/json' },
+                credentials: 'same-origin',
+                body:        JSON.stringify(settings),
+            });
+            const data = await res.json();
+            if (data.success) showToast();
+        } catch (e) { console.warn('Failed to save settings:', e); }
+    }
+
+    // ── Apply DB values → UI ─────────────────────────────────
+    function applyToUI(s) {
+        setToggle('toggle-map-visible',    s.map_visible);
+        setToggle('toggle-show-status',    s.show_status);
+        setToggle('toggle-public-profile', s.public_profile);
+        setToggle('toggle-active-only',    s.active_only);
+        setToggle('toggle-notif-messages', s.notif_messages);
+        setToggle('toggle-notif-friends',  s.notif_friends);
+        setToggle('toggle-notif-events',   s.notif_events);
+        setToggle('toggle-notif-announce', s.notif_announce);
+        setToggle('toggle-start-hero',     s.start_hero);
+
+        const sel = document.getElementById('select-msg-permission');
+        if (sel) sel.value = s.msg_permission || 'everyone';
+
+        const slider = document.getElementById('rad');
+        const label  = document.getElementById('radVal');
+        if (slider) slider.value      = s.search_radius || 25;
+        if (label)  label.textContent = `${s.search_radius || 25} km`;
+    }
+
+    function setToggle(id, on) {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.toggle('on', !!on);
+    }
+
+    // ── Toggle ID → settings key map ────────────────────────
+    const TOGGLE_MAP = {
+        'toggle-map-visible':    'map_visible',
+        'toggle-show-status':    'show_status',
+        'toggle-public-profile': 'public_profile',
+        'toggle-active-only':    'active_only',
+        'toggle-notif-messages': 'notif_messages',
+        'toggle-notif-friends':  'notif_friends',
+        'toggle-notif-events':   'notif_events',
+        'toggle-notif-announce': 'notif_announce',
+        'toggle-start-hero':     'start_hero',
+    };
+
+    // ── Toggle click handler ─────────────────────────────────
+    function handleToggleClick(e) {
+        const toggle = e.target.closest('.gs-toggle');
+        if (!toggle || !toggle.id) return;
+
+        const isOn = toggle.classList.toggle('on');
+        const key  = TOGGLE_MAP[toggle.id];
+        if (!key) return;
+
+        settings[key] = isOn;
+        saveSettings();
+
+        // Real-time side effects
+        if (key === 'map_visible' && window.parent?.setDemoVisible) {
+            window.parent.setDemoVisible(isOn);
+        }
+    }
+
+    // ── Select change handler ────────────────────────────────
+    function handleSelectChange(e) {
+        if (e.target.id === 'select-msg-permission') {
+            settings.msg_permission = e.target.value;
+            saveSettings();
+        }
+    }
+
+    // ── Slider: live label update, save on release ───────────
+    function wireSlider() {
+        const slider = document.getElementById('rad');
+        const label  = document.getElementById('radVal');
+        if (!slider) return;
+        slider.addEventListener('input', () => {
+            if (label) label.textContent = `${slider.value} km`;
+            settings.search_radius = parseInt(slider.value, 10);
+        });
+        // Save only when the user releases to avoid hammering the DB
+        slider.addEventListener('change', () => {
+            settings.search_radius = parseInt(slider.value, 10);
+            saveSettings();
+        });
+    }
+
+    // ── Sidebar nav: highlight + smooth scroll ───────────────
+    function wireSidebarNav() {
+        document.querySelectorAll('.gs-nav-item[data-section]').forEach(item => {
+            item.addEventListener('click', () => {
+                document.querySelectorAll('.gs-nav-item').forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+                const target = document.getElementById(item.dataset.section);
+                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            });
+        });
+    }
+
+    // ── Back button ──────────────────────────────────────────
+    document.getElementById('settingsBackBtn')?.addEventListener('click', () => {
+        if (window.parent?.closeModalPage) window.parent.closeModalPage();
+        else history.back();
+    });
+
+    // ── Delete account (placeholder) ────────────────────────
+    document.getElementById('deleteAccountBtn')?.addEventListener('click', () => {
+        if (confirm('Are you sure you want to delete your account? This cannot be undone.')) {
+            // TODO: call DELETE /api/account when that endpoint exists
+            alert('Account deletion not yet implemented.');
+        }
+    });
+
+    // ── Boot ─────────────────────────────────────────────────
+    document.addEventListener('click',  handleToggleClick);
+    document.addEventListener('change', handleSelectChange);
+    wireSidebarNav();
+    wireSlider();
+    loadSettings();
+    loadAccountDisplay();
+}
+
+
+// ══════════════════════════════════════════════════════════
+//  Boot  (REPLACE the existing Boot block at the bottom of
+//  app.js with this one — only change is initSettings() added)
+// ══════════════════════════════════════════════════════════
+document.addEventListener('DOMContentLoaded', () => {
+    initLogin();
+    initRegister();
+    initProfile();      // includes initVisibilityToggle()
+    initSteamSearch();  // Steam game search modal
+    initChat();         // full chat with auto-connect, typing, mobile panels
+    initLanding();      // Three.js globe scroll effect
+    initSettings();     // ← NEW
+});
 
 //  Boot 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1599,4 +1819,5 @@ document.addEventListener('DOMContentLoaded', () => {
     initSteamSearch();  // Steam game search modal
     initChat();         // full chat with auto-connect, typing, mobile panels
     initLanding();      // Three.js globe (AI-generated scroll effect)
+    initSettings();     // user settings page with DB sync
 });
