@@ -2,7 +2,7 @@
 // MERGED: old version used as primary base (avatar markers, events system,
 // mini-profile popup, custom selects, demo visibility).
 // URL paths updated from old flat-file scheme to new Flask route scheme.
-
+console.log('[map.js] loaded', Date.now());
 const MAPTILER_KEY   = 'qXZMMqoofeJQqdk8nsv1';
 const MAPTILER_STYLE = `https://api.maptiler.com/maps/019d1f6a-0bb2-7db3-a9c7-670e85ac0f84/style.json?key=${MAPTILER_KEY}`;
 
@@ -12,15 +12,15 @@ const STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E';
 // Hardcoded demo players. Each has avatarSeed (DiceBear), location (for filter),
 // mapVisible flag, and isDemo (marks the logged-in user's stand-in marker).
 const PLAYERS = [
-    { id: 1,  gamertag: 'NightOwl_SE',   games: ['Valorant', 'CS2'],            rank: 'Diamond',    status: 'active',  lng: 13.002, lat: 55.607, lastActive: 'Just now',   age: 24, location: 'malmo',     avatarSeed: 'nightowl',    mapVisible: true },
-    { id: 2,  gamertag: 'ProPlayer_99',  games: ['Minecraft', 'Fortnite'],       rank: 'Gold',       status: 'recent',  lng: 13.018, lat: 55.612, lastActive: '12 min ago',  age: 19, location: 'malmo',     avatarSeed: 'proplayer',   mapVisible: true },
-    { id: 3,  gamertag: 'ZeroGrav',      games: ['League of Legends'],           rank: 'Platinum',   status: 'active',  lng: 12.995, lat: 55.598, lastActive: 'Just now',   age: 28, location: 'goteborg',  avatarSeed: 'zerograv',    mapVisible: true },
-    { id: 4,  gamertag: 'StealthMode_K', games: ['Valorant', 'Apex Legends'],    rank: 'Challenger', status: 'active',  lng: 13.010, lat: 55.615, lastActive: 'Just now',   age: 22, location: 'stockholm', avatarSeed: 'stealth',     mapVisible: true },
-    { id: 5,  gamertag: 'CasualGamer88', games: ['Minecraft'],                   rank: 'Unranked',   status: 'recent',  lng: 13.025, lat: 55.595, lastActive: '1 hour ago', age: 31, location: 'goteborg',  avatarSeed: 'casualgamer', mapVisible: true },
-    { id: 6,  gamertag: 'SniperWolf',    games: ['CS2', 'Valorant'],             rank: 'Master',     status: 'active',  lng: 13.005, lat: 55.600, lastActive: 'Just now',   age: 26, location: 'malmo',     avatarSeed: 'sniperwolf',  mapVisible: true },
-    { id: 7,  gamertag: 'NoobMaster69',  games: ['Fortnite'],                    rank: 'Silver',     status: 'offline', lng: 13.015, lat: 55.620, lastActive: '2 days ago', age: 17, location: 'stockholm', avatarSeed: 'noobmaster',  mapVisible: true },
+    { id: -1,  gamertag: 'NightOwl_SE',   games: ['Valorant', 'CS2'],            rank: 'Diamond',    status: 'active',  lng: 13.002, lat: 55.607, lastActive: 'Just now',   age: 24, location: 'malmo',     avatarSeed: 'nightowl',    mapVisible: true },
+    { id: -2,  gamertag: 'ProPlayer_99',  games: ['Minecraft', 'Fortnite'],       rank: 'Gold',       status: 'recent',  lng: 13.018, lat: 55.612, lastActive: '12 min ago',  age: 19, location: 'malmo',     avatarSeed: 'proplayer',   mapVisible: true },
+    { id: -3,  gamertag: 'ZeroGrav',      games: ['League of Legends'],           rank: 'Platinum',   status: 'active',  lng: 12.995, lat: 55.598, lastActive: 'Just now',   age: 28, location: 'goteborg',  avatarSeed: 'zerograv',    mapVisible: true },
+    { id: -4,  gamertag: 'StealthMode_K', games: ['Valorant', 'Apex Legends'],    rank: 'Challenger', status: 'active',  lng: 13.010, lat: 55.615, lastActive: 'Just now',   age: 22, location: 'stockholm', avatarSeed: 'stealth',     mapVisible: true },
+    { id: -5,  gamertag: 'CasualGamer88', games: ['Minecraft'],                   rank: 'Unranked',   status: 'recent',  lng: 13.025, lat: 55.595, lastActive: '1 hour ago', age: 31, location: 'goteborg',  avatarSeed: 'casualgamer', mapVisible: true },
+    { id: -6,  gamertag: 'SniperWolf',    games: ['CS2', 'Valorant'],             rank: 'Master',     status: 'active',  lng: 13.005, lat: 55.600, lastActive: 'Just now',   age: 26, location: 'malmo',     avatarSeed: 'sniperwolf',  mapVisible: true },
+    { id: -7,  gamertag: 'NoobMaster69',  games: ['Fortnite'],                    rank: 'Silver',     status: 'offline', lng: 13.015, lat: 55.620, lastActive: '2 days ago', age: 17, location: 'stockholm', avatarSeed: 'noobmaster',  mapVisible: true },
     // Demo player represents the logged-in user on the map
-    { id: 99, gamertag: 'Demo',          games: ['Valorant', 'CS2', 'Fortnite'], rank: 'Gold',       status: 'active',  lng: 13.008, lat: 55.603, lastActive: 'Just now',   age: 22, location: 'malmo',     avatarSeed: 'GameScape',   mapVisible: true, isDemo: true },
+    { id: -99, gamertag: 'Demo',          games: ['Valorant', 'CS2', 'Fortnite'], rank: 'Gold',       status: 'active',  lng: 13.008, lat: 55.603, lastActive: 'Just now',   age: 22, location: 'malmo',     avatarSeed: 'GameScape',   mapVisible: true, isDemo: true },
 ];
 
 
@@ -35,10 +35,13 @@ function getDemoVisible() {
 }
 
 window.livePlayers = null;
-
-window.currentPlayersForMap = function() {
-    return window.livePlayers || getVisiblePlayers();
+window.currentPlayersForMap = function () {
+    if (Array.isArray(window.livePlayers) && window.livePlayers.length > 0) {
+        return window.livePlayers;
+    }
+    return getVisiblePlayers(); // demo-listan (respekterar demo visibility)
 };
+
 
 
 // Called by profile.js (inside iframe) via window.setDemoVisible().
@@ -46,7 +49,8 @@ function setDemoVisible(val) {
     localStorage.setItem(DEMO_VISIBLE_KEY, String(val));
     const demo = PLAYERS.find(p => p.isDemo);
     if (demo) demo.mapVisible = val;
-    renderMapMarkers(getVisiblePlayers());
+
+    renderMapMarkers(window.currentPlayersForMap());
     refreshEventMarkers();
 }
 // Apply persisted visibility on load
@@ -98,7 +102,7 @@ async function mapFriendAction(action, username) {
     const res = await fetch(url, options);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) throw new Error(data.error || 'Friend action failed');
-    await loadLivePlayers();
+    // await loadLivePlayers();
 }
 
 function mapFriendActions(player) {
@@ -140,9 +144,8 @@ function setLoggedIn(status, username, avatarSeed) {
     if (status && username) {
         const demo = PLAYERS.find(p => p.isDemo);
         if (demo) { demo.gamertag = username; demo.avatarSeed = currentAvatarSeed; refreshPlayerAvatar(demo); }
-        renderMapMarkers(getVisiblePlayers());
+        renderMapMarkers(window.currentPlayersForMap());
         sendMapPresence();
-        loadLivePlayers();
     }
 }
 
@@ -158,16 +161,15 @@ async function checkSession() {
         }
     } catch (e) { console.warn('Session check failed:', e); }
 }
-
 function sendMapPresence() {
     if (!isLoggedIn) return;
-    const demo = PLAYERS.find(p => p.isDemo);
-    if (!demo) return;
+
+    // Skicka INGEN lat/lng -> backend touchar bara last_active/is_online
     fetch('/api/presence', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         credentials: 'same-origin',
-        body: JSON.stringify({ lat: demo.lat, lng: demo.lng })
+        body: JSON.stringify({})
     }).catch(() => {});
 }
 
@@ -200,17 +202,28 @@ function mergeLivePlayer(player) {
 }
 
 async function loadLivePlayers() {
+    return; // WS-only: polling avstängt
+
     try {
         const res = await fetch('/api/players', { credentials: 'same-origin' });
         const data = await res.json();
         if (!data.success) return;
-        const liveIds = new Set();
-        (data.players || []).forEach(p => { liveIds.add(p.id); mergeLivePlayer(p); });
-        for (let i = PLAYERS.length - 1; i >= 0; i--) {
-            if (PLAYERS[i].isLive && !PLAYERS[i].isDemo && !liveIds.has(PLAYERS[i].id)) PLAYERS.splice(i, 1);
+
+        const incoming = (data.players || []);
+
+        if (incoming.length > 0) {
+            window.livePlayers = spreadOverlappingPlayers(
+                incoming.map(p => ({ ...p, mapVisible: true }))
+            );
+        } else {
+            window.livePlayers = null; // fallback till demo
         }
-        renderMapMarkers(getVisiblePlayers());
-    } catch (e) { console.warn('Failed to load live players:', e); }
+
+        renderMapMarkers(window.currentPlayersForMap());
+        refreshEventMarkers?.();
+    } catch (e) {
+        console.warn('Failed to load live players:', e);
+    }
 }
 
 
@@ -379,7 +392,6 @@ map.on('load', () => {
 
 map.on('load', () => {
     renderMapMarkers(window.currentPlayersForMap());
-    loadLivePlayers();
 });
 
 map.on('error', (e) => {
@@ -824,6 +836,8 @@ window.addGame = addGame;
 
 
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[map.js] DOMContentLoaded', Date.now());
+
     document.getElementById('hamburgerBtn')?.addEventListener('click', toggleMenu);
     document.getElementById('menuCloseBtn')?.addEventListener('click', closeMenu);
     document.getElementById('menuOverlay')?.addEventListener('click', closeMenu);
@@ -855,7 +869,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateLoginLogoutButton();
     checkSession();
-    setInterval(() => { sendMapPresence(); loadLivePlayers(); }, 8000);
+    setInterval(() => { sendMapPresence(); }, 8000);
     checkAdmin();         // show admin panel for admins
     initEventSystem();    // event creation button + form
     initCustomSelects();  // custom glassy dropdowns
@@ -880,10 +894,7 @@ document.addEventListener('DOMContentLoaded', () => {
 //  the marker to see a green event popup with time and game details.
 
 // Pre-loaded demo events so the map isn't empty on first visit
-let activeEvents = [
-    { playerId: 1, eventName: 'Friday Ranked Grind', gameName: 'Valorant', startHour: 8,  startMin: 0,  startAmPm: 'PM', hasEnd: false },
-    { playerId: 6, eventName: 'CS2 5v5 Scrim',       gameName: 'CS2',      startHour: 9,  startMin: 30, startAmPm: 'PM', hasEnd: true, endHour: 11, endMin: 0, endAmPm: 'PM' }
-];
+let activeEvents = [];
 
 const pulseMarkers = {}; // playerId → removal handle
 
@@ -1351,9 +1362,15 @@ function spreadOverlappingPlayers(players) {
     });
 }
 
+
 function initMapWebSocket() {
+    console.log('[map.js] initMapWebSocket called', Date.now());
+
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${window.location.host}/ws/map`);
+
+    window._mapWs = ws;
+    console.log('[map ws] init', ws.url);
 
     ws.onopen = () => console.log('[map ws] open');
 
@@ -1361,18 +1378,32 @@ function initMapWebSocket() {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
 
-        if (msg.type === 'players_snapshot') {
-            const incoming = msg.players || [];
-            if (incoming.length > 0) {
-                window.livePlayers = spreadOverlappingPlayers(incoming).map(p => ({ ...p, mapVisible: true }));
+        if (msg.type !== 'players_snapshot') return;
 
+        const incoming = msg.players || [];
 
-                renderMapMarkers(window.currentPlayersForMap());
-                refreshEventMarkers?.();
-            } else {
-                console.warn('[map ws] snapshot empty (keeping demo)');
+        const cleaned = incoming
+            .map(p => ({ ...p, lat: Number(p.lat), lng: Number(p.lng) }))
+            .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+
+        if (cleaned.length !== incoming.length) {
+                console.warn(
+                    '[ws] dropped players with invalid coords',
+                    incoming.filter(p => !Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lng)))
+            );
             }
-        }
+
+        window._lastIncoming = cleaned;
+
+        console.log('[ws] players_snapshot count=', cleaned.length);
+        console.table(cleaned.map(p => ({ gamertag: p.gamertag, lat: p.lat, lng: p.lng })));
+        
+        window.livePlayers = cleaned.length
+        ? cleaned.map(p => ({ ...p, mapVisible: true }))
+        : null;
+
+        renderMapMarkers(window.currentPlayersForMap());
+        refreshEventMarkers?.();
     };
 
     ws.onerror = (e) => console.warn('[map ws] error', e);
