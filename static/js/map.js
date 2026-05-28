@@ -9,8 +9,11 @@ const MAPTILER_STYLE = `https://api.maptiler.com/maps/019d1f6a-0bb2-7db3-a9c7-67
 // Steam API key (kept from new project for future live player data integration)
 const STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E';
 
+const PLAYERS = [];
+
 // Hardcoded demo players. Each has avatarSeed (DiceBear), location (for filter),
 // mapVisible flag, and isDemo (marks the logged-in user's stand-in marker).
+/*
 const PLAYERS = [
     { id: -1,  gamertag: 'NightOwl_SE',   games: ['Valorant', 'CS2'],            rank: 'Diamond',    status: 'active',  lng: 13.002, lat: 55.607, lastActive: 'Just now',   age: 24, location: 'malmo',     avatarSeed: 'nightowl',    mapVisible: true },
     { id: -2,  gamertag: 'ProPlayer_99',  games: ['Minecraft', 'Fortnite'],       rank: 'Gold',       status: 'recent',  lng: 13.018, lat: 55.612, lastActive: '12 min ago',  age: 19, location: 'malmo',     avatarSeed: 'proplayer',   mapVisible: true },
@@ -21,29 +24,28 @@ const PLAYERS = [
     { id: -7,  gamertag: 'NoobMaster69',  games: ['Fortnite'],                    rank: 'Silver',     status: 'offline', lng: 13.015, lat: 55.620, lastActive: '2 days ago', age: 17, location: 'stockholm', avatarSeed: 'noobmaster',  mapVisible: true },
     // Demo player represents the logged-in user on the map
     { id: -99, gamertag: 'Demo',          games: ['Valorant', 'CS2', 'Fortnite'], rank: 'Gold',       status: 'active',  lng: 13.008, lat: 55.603, lastActive: 'Just now',   age: 22, location: 'malmo',     avatarSeed: 'GameScape',   mapVisible: true, isDemo: true },
-];
+];*/
 
 
 
 //  Demo visibility (eye icon in profile page) 
 // Persisted in localStorage so the preference survives page refresh.
-const DEMO_VISIBLE_KEY = 'gamescape_demo_visible';
-
+//const DEMO_VISIBLE_KEY = 'gamescape_demo_visible';
+/*
 function getDemoVisible() {
     const v = localStorage.getItem(DEMO_VISIBLE_KEY);
     return v === null ? true : v === 'true';
 }
-
-window.livePlayers = null;
+*/
+window.livePlayers = [];
 window.currentPlayersForMap = function () {
-    if (Array.isArray(window.livePlayers) && window.livePlayers.length > 0) {
-        return window.livePlayers;
-    }
-    return getVisiblePlayers(); // demo-listan (respekterar demo visibility)
+    return window.livePlayers;
+
 };
 
 
 
+/*
 // Called by profile.js (inside iframe) via window.setDemoVisible().
 function setDemoVisible(val) {
     localStorage.setItem(DEMO_VISIBLE_KEY, String(val));
@@ -52,15 +54,16 @@ function setDemoVisible(val) {
 
     renderMapMarkers(window.currentPlayersForMap());
     refreshEventMarkers();
-}
+}*/
 // Apply persisted visibility on load
-PLAYERS.find(p => p.isDemo).mapVisible = getDemoVisible();
+//PLAYERS.find(p => p.isDemo).mapVisible = getDemoVisible();
 
 // Expose so profile iframe can call it
-window.setDemoVisible = setDemoVisible;
+// window.setDemoVisible = setDemoVisible;
+
 
 function getVisiblePlayers() {
-    return PLAYERS.filter(p => p.mapVisible);
+    return window.currentPlayersForMap();
 }
 
 
@@ -106,7 +109,7 @@ async function mapFriendAction(action, username) {
 }
 
 function mapFriendActions(player) {
-    if (!isLoggedIn || player.isDemo || player.is_self || player.gamertag === currentUsername) return '';
+    if (!isLoggedIn || player.is_self || player.gamertag === currentUsername) return '';
     const state = player.friendship_status || 'none';
     if (state === 'friends') return `<button class="mini-profile-btn friend-action-btn" onclick="window.location.href='/chat'">Chat</button><button class="mini-profile-btn friend-action-btn muted" onclick="window._mapFriendAction('remove','${player.gamertag}')">Remove Friend</button>`;
     if (state === 'incoming') return `<button class="mini-profile-btn friend-action-btn" onclick="window._mapFriendAction('accept','${player.gamertag}')">Accept Friend</button><button class="mini-profile-btn friend-action-btn muted" onclick="window._mapFriendAction('ignore','${player.gamertag}')">Ignore</button>`;
@@ -140,13 +143,14 @@ function setLoggedIn(status, username, avatarSeed) {
         avatarImg.alt = username;
     }
 
+    /*
     // Make the demo marker represent the real logged-in user's gamertag/avatar.
     if (status && username) {
         const demo = PLAYERS.find(p => p.isDemo);
         if (demo) { demo.gamertag = username; demo.avatarSeed = currentAvatarSeed; refreshPlayerAvatar(demo); }
         renderMapMarkers(window.currentPlayersForMap());
         sendMapPresence();
-    }
+    }*/
 }
 
 // Checks the server session on page load so a refreshed page stays logged in.
@@ -172,7 +176,7 @@ function sendMapPresence() {
         body: JSON.stringify({})
     }).catch(() => {});
 }
-
+/*
 function mergeLivePlayer(player) {
     const existing = PLAYERS.find(p => p.id === player.id);
     const mapped = {
@@ -200,7 +204,7 @@ function mergeLivePlayer(player) {
     if (existing) Object.assign(existing, mapped);
     else PLAYERS.push(mapped);
 }
-
+*/
 async function loadLivePlayers() {
     return; // WS-only: polling avstängt
 
@@ -507,11 +511,11 @@ window.closePlayerModal = closePlayerModalSafe;
 
 // Allow event popup to open the full profile modal
 window._openProfileFromPopup = function(playerId) {
-    const player = PLAYERS.find(p => p.id === playerId);
+    const player = window.currentPlayersForMap().find(p => p.id === playerId);
     if (player) { closeAllPopups(); openPlayerModal(player); }
 };
 window._openFullProfile = function(playerId) {
-    const player = PLAYERS.find(p => p.id === playerId);
+    const player = window.currentPlayersForMap().find(p => p.id === playerId);
     if (player) { closeAllPopups(); openPlayerModal(player); }
 };
 
@@ -736,8 +740,13 @@ function applyFilters() {
 
 // Badge counts for each city in the location dropdown
 function updateLocationCounts() {
-    const counts = { all: PLAYERS.length, malmo: 0, goteborg: 0, stockholm: 0 };
-    PLAYERS.forEach(p => { if (counts[p.location] !== undefined) counts[p.location]++; });
+    const players = window.currentPlayersForMap();
+    const counts = { all: players.length, malmo: 0, goteborg: 0, stockholm: 0 };
+
+    players.forEach(p => {
+        if (counts[p.location] !== undefined) counts[p.location]++;
+    });
+
     Object.entries(counts).forEach(([loc, n]) => {
         const el = document.getElementById(`cnt-${loc}`);
         if (el) el.textContent = n;
@@ -1398,10 +1407,10 @@ function initMapWebSocket() {
         console.log('[ws] players_snapshot count=', cleaned.length);
         console.table(cleaned.map(p => ({ gamertag: p.gamertag, lat: p.lat, lng: p.lng })));
         
-        window.livePlayers = cleaned.length
-        ? cleaned.map(p => ({ ...p, mapVisible: true }))
-        : null;
-
+        window.livePlayers = spreadOverlappingPlayers(
+        cleaned.map(p => ({ ...p, mapVisible: true }))
+            );
+        updateLocationCounts();
         renderMapMarkers(window.currentPlayersForMap());
         refreshEventMarkers?.();
     };

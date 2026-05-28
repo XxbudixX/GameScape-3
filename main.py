@@ -813,7 +813,10 @@ def update_presence():
         ensure_presence_columns(cur)
         lat = data.get('lat')
         lng = data.get('lng')
-        if lat is not None and lng is not None:
+        update_location = bool(data.get('update_location', False))
+
+        if update_location and lat is not None and lng is not None:
+            lat = float(lat); lng = float(lng)
             cur.execute("""
                 UPDATE users
                 SET latitude=%s, longitude=%s,
@@ -823,6 +826,7 @@ def update_presence():
             """, (lat, lng, session['user_id']))
         else:
             touch_current_user(cur)
+
         conn.commit()
         return jsonify({'success': True})
     except Exception as e:
