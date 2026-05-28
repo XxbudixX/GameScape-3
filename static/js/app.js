@@ -757,6 +757,7 @@ function initChat() {
     let searchDebounce     = null;
     let friendsState       = { friends: [], incoming: [], outgoing: [] };
     let activeChatTab      = 'inbox';
+    let replyTarget        = null;
 
     //  DOM refs 
     const statusSpan        = document.getElementById('connectionStatus');
@@ -775,6 +776,7 @@ function initChat() {
     const addFriendBtn      = document.getElementById('addFriendBtn');
     const addFriendMsg      = document.getElementById('addFriendMsg');
     const requestsListDiv   = document.getElementById('friendRequestsList');
+    const replyPreview      = document.getElementById('replyPreview');
 
     // animated background blob (second blob to complement body::after)
     const blob       = document.createElement('div');
@@ -804,9 +806,8 @@ function initChat() {
                 currentUsername = data.username;
                 statusSpan.textContent = `Connected as ${data.username}`;
                 statusSpan.className   = 'status-online';
-                await loadContactsFromDB();
-                await loadFriendsState();
                 connectWebSocket(data.username);
+                await Promise.all([loadContactsFromDB(), loadFriendsState()]);
             }
         } catch (e) { console.warn('Session check failed:', e); }
     }
@@ -893,20 +894,22 @@ function initChat() {
             if (data.success) {
                 messagesHistory[partner] = data.messages.map(m => ({
                     from: m.from, to: m.from === currentUsername ? partner : currentUsername,
-                    text: m.text, time: m.time
+                    id: m.id, text: m.text, time: m.time, sent_at: m.sent_at,
+                    edited_at: m.edited_at, deleted: m.deleted, avatar_seed: m.avatar_seed,
+                    reply_to_id: m.reply_to_id, reply_from: m.reply_from, reply_text: m.reply_text
                 }));
             }
         } catch (e) { console.warn('Failed to load history:', e); }
     }
 
-    async function saveMessageToDB(to, text) {
+    async function saveMessageToDB(to, text, replyTo = null) {
         try {
             const res = await fetch('/api/chat/send', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                credentials: 'same-origin', body: JSON.stringify({ to, message: text })
+                credentials: 'same-origin', body: JSON.stringify({ to, message: text, reply_to: replyTo })
             });
             const data = await res.json().catch(() => ({}));
-            return res.ok && data.success !== false;
+            return res.ok && data.success !== false ? data : null;
         } catch (_) { return false; }
     }
 
@@ -954,7 +957,7 @@ function initChat() {
                 item.className   = 'search-result-item';
                 const state = u.friendship_status || requestInfo(u.username);
                 const actionLabel = state === 'friends' ? 'Chat' : state === 'incoming' ? 'Accept' : state === 'outgoing' ? 'Pending' : 'Add';
-                item.innerHTML   = `<div class="search-result-avatar">${u.username.charAt(0).toUpperCase()}</div><span>${escapeHtml(u.username)}</span><button class="friend-mini-btn" type="button">${actionLabel}</button>`;
+                item.innerHTML   = `<div class="search-result-avatar"><img src="${avatarUrl(u.avatar_seed || u.username)}" alt=""></div><span>${escapeHtml(u.username)}</span><button class="friend-mini-btn" type="button">${actionLabel}</button>`;
                 item.addEventListener('click', async () => {
                     userSearchResults.style.display = 'none';
                     userSearchResults.innerHTML     = '';
@@ -997,7 +1000,8 @@ function initChat() {
                 lastTime: c.last_time || '',
                 isOnline: !!c.online,
                 unreadCount: Number(c.unread_count || 0),
-                isFriend: !!c.is_friend
+                isFriend: !!c.is_friend,
+                avatarSeed: c.avatar_seed || c.username
             };
         });
 
@@ -1008,7 +1012,7 @@ function initChat() {
                 contactMap[f.username].unreadCount = Number(f.unread_count || 0);
                 contactMap[f.username].isFriend = true;
             } else if (activeChatTab === 'friends') {
-                contactMap[f.username] = { lastMessage: '', lastTime: '', isOnline: !!f.online, unreadCount: Number(f.unread_count || 0), isFriend: true };
+                contactMap[f.username] = { lastMessage: '', lastTime: '', isOnline: !!f.online, unreadCount: Number(f.unread_count || 0), isFriend: true, avatarSeed: f.avatar_seed || f.username };
             }
         });
 
@@ -1052,7 +1056,7 @@ function initChat() {
             div.className         = `contact-item ${isActive ? 'active' : ''}`;
             div.dataset.username  = username;
             div.innerHTML         = `
-                <div class="contact-avatar">${username.charAt(0).toUpperCase()}</div>
+                <div class="contact-avatar"><img src="${avatarUrl(info.avatarSeed || username)}" alt=""></div>
                 <div class="contact-info">
                     <div class="contact-name">${escapeHtml(username)} ${unreadBadge}</div>
                     <div class="contact-status ${info.isOnline ? 'online' : ''}">${statusLabel}</div>
@@ -1080,9 +1084,10 @@ function initChat() {
     async function openChatWith(username) {
         currentChatPartner = username;
         chatNameSpan.textContent    = username;
-        // Update avatar initial
         const avatarEl = document.getElementById('chatPartnerAvatar');
-        if (avatarEl) avatarEl.textContent = username.charAt(0).toUpperCase();
+        const contact = dbContacts.find(c => c.username === username) || friendInfo(username);
+        if (avatarEl) avatarEl.innerHTML = `<img src="${avatarUrl(contact?.avatar_seed || username)}" alt="">`;
+        clearReply();
         removeTypingIndicator();
         document.querySelectorAll('.contact-item').forEach(el => {
             el.classList.toggle('active', el.dataset.username === username);
@@ -1104,6 +1109,22 @@ function initChat() {
 
     //  Render messages 
 
+    function avatarUrl(seed) {
+        return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
+    }
+
+    function messageDate(msg) {
+        if (msg.sent_at) return new Date(msg.sent_at);
+        return null;
+    }
+
+    function shouldStack(msg, prev) {
+        if (!prev || prev.from !== msg.from || msg.reply_to_id) return false;
+        const a = messageDate(msg);
+        const b = messageDate(prev);
+        return a && b && Math.abs(a - b) <= 120000;
+    }
+
     function renderMessages(partner) {
         removeTypingIndicator();
         messagesDiv.innerHTML = '';
@@ -1112,28 +1133,79 @@ function initChat() {
             messagesDiv.innerHTML = '<div class="placeholder-message">No messages yet say hi!</div>';
             return;
         }
-        history.forEach(msg => appendMessageBubble(msg));
+        history.forEach((msg, index) => appendMessageBubble(msg, shouldStack(msg, history[index - 1])));
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
 
-    function appendMessageBubble(msg) {
+    function appendMessageBubble(msg, stacked = false) {
         const isSelf  = msg.from === currentUsername || msg.from === 'You';
         const div     = document.createElement('div');
-        div.className = `message ${isSelf ? 'self' : ''}`;
+        div.className = `message-row ${isSelf ? 'self' : ''} ${stacked ? 'stacked' : ''} ${msg.deleted ? 'deleted' : ''}`;
+        div.dataset.messageId = msg.id || '';
+        const reply = msg.reply_to_id ? `<div class="reply-context">↳ ${escapeHtml(msg.reply_from || 'Message')}: ${escapeHtml(msg.reply_text || '')}</div>` : '';
+        const edited = msg.edited_at ? '<span class="edited-label">edited</span>' : '';
+        const actions = isSelf && !msg.deleted && msg.id ? `<div class="message-actions"><button data-chat-action="reply">Reply</button><button data-chat-action="edit">Edit</button><button data-chat-action="delete">Delete</button></div>` : `<div class="message-actions"><button data-chat-action="reply">Reply</button></div>`;
         div.innerHTML = `
-            <div class="sender">${escapeHtml(isSelf ? 'You' : msg.from)}</div>
-            <div class="text">${escapeHtml(msg.text)}</div>
-            <div class="time">${msg.time}</div>`;
+            <div class="message-avatar">${stacked ? '' : `<img src="${avatarUrl(msg.avatar_seed || msg.from)}" alt="">`}</div>
+            <div class="message-main">
+                ${stacked ? '' : `<div class="message-head"><span class="sender">${escapeHtml(isSelf ? 'You' : msg.from)}</span><span class="time">${escapeHtml(msg.time || '')}</span></div>`}
+                ${reply}
+                <div class="message-text">${escapeHtml(msg.deleted ? '[deleted]' : msg.text)} ${edited}</div>
+            </div>
+            ${actions}`;
         messagesDiv.appendChild(div);
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
 
-    function addMessageLocally(from, to, text) {
+    function addMessageLocally(from, to, text, extra = {}) {
         const partner = from === currentUsername ? to : from;
         if (!messagesHistory[partner]) messagesHistory[partner] = [];
-        const msg = { from, to, text, time: getTime() };
+        const msg = { from, to, text, time: extra.time || getTime(), sent_at: extra.sent_at || new Date().toISOString(), ...extra };
         messagesHistory[partner].push(msg);
-        if (currentChatPartner === partner) { removeTypingIndicator(); appendMessageBubble(msg); }
+        if (currentChatPartner === partner) renderMessages(partner);
+    }
+
+    function clearReply() {
+        replyTarget = null;
+        if (replyPreview) {
+            replyPreview.style.display = 'none';
+            replyPreview.innerHTML = '';
+        }
+    }
+
+    function startReply(messageId) {
+        const msg = (messagesHistory[currentChatPartner] || []).find(m => String(m.id) === String(messageId));
+        if (!msg || !replyPreview) return;
+        replyTarget = msg;
+        replyPreview.style.display = 'flex';
+        replyPreview.innerHTML = `<span>Replying to ${escapeHtml(msg.from === currentUsername ? 'yourself' : msg.from)}: ${escapeHtml(msg.text).slice(0, 70)}</span><button type="button" data-chat-action="cancel-reply">×</button>`;
+        messageInput.focus();
+    }
+
+    async function editMessage(messageId) {
+        const msg = (messagesHistory[currentChatPartner] || []).find(m => String(m.id) === String(messageId));
+        if (!msg) return;
+        const next = prompt('Edit message', msg.text);
+        if (!next || !next.trim() || next.trim() === msg.text) return;
+        const res = await fetch(`/api/chat/message/${messageId}`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+            body: JSON.stringify({ message: next.trim() })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) { alert(data.error || 'Could not edit message'); return; }
+        msg.text = next.trim();
+        msg.edited_at = data.edited_at || new Date().toISOString();
+        renderMessages(currentChatPartner);
+    }
+
+    async function deleteMessage(messageId) {
+        if (!confirm('Delete this message?')) return;
+        const res = await fetch(`/api/chat/message/${messageId}`, { method: 'DELETE', credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok || data.success === false) { alert(data.error || 'Could not delete message'); return; }
+        const msg = (messagesHistory[currentChatPartner] || []).find(m => String(m.id) === String(messageId));
+        if (msg) { msg.deleted = true; msg.text = '[deleted]'; }
+        renderMessages(currentChatPartner);
     }
 
     //  Typing indicator 
@@ -1198,7 +1270,7 @@ function initChat() {
             if (msgType === 'stop_typing') { if (currentChatPartner === from) removeTypingIndicator();    return; }
 
             removeTypingIndicator();
-            addMessageLocally(from, currentUsername, data.message);
+            addMessageLocally(from, currentUsername, data.message, { id: data.id, time: data.time || getTime(), sent_at: data.sent_at || new Date().toISOString(), reply_to_id: data.reply_to, reply_from: data.reply_from, reply_text: data.reply_text });
             if (currentChatPartner !== from) loadFriendsState();
             if (!onlineUsers.has(from)) { onlineUsers.add(from); loadContactsFromDB(); }
         };
@@ -1225,6 +1297,7 @@ function initChat() {
         const text = messageInput.value.trim();
         if (!text) return;
         messageInput.value = '';
+        const reply = replyTarget;
 
         // Stop typing indicator
         clearTimeout(typingTimer);
@@ -1233,11 +1306,13 @@ function initChat() {
             chatSocket.send(JSON.stringify({ to: currentChatPartner, type: 'stop_typing' }));
 
 
-        const saved = await saveMessageToDB(currentChatPartner, text);
-        if (!saved) { alert('You can only message friends'); return; }
-        addMessageLocally(currentUsername, currentChatPartner, text);
+        const saved = await saveMessageToDB(currentChatPartner, text, reply?.id);
+        if (!saved) { messageInput.value = text; alert('Could not send message'); return; }
+        const extra = { id: saved.id, time: saved.time || getTime(), sent_at: saved.sent_at || new Date().toISOString(), reply_to_id: reply?.id, reply_from: reply?.from, reply_text: reply?.text, avatar_seed: currentUsername };
+        addMessageLocally(currentUsername, currentChatPartner, text, extra);
+        clearReply();
         if (chatSocket && chatSocket.readyState === WebSocket.OPEN)
-            chatSocket.send(JSON.stringify({ to: currentChatPartner, type: 'message', message: text }));
+            chatSocket.send(JSON.stringify({ to: currentChatPartner, type: 'message', message: text, ...extra }));
     }
 
     //  Partner status in conversation header 
@@ -1271,6 +1346,15 @@ function initChat() {
             renderFriendRequests();
             renderContacts();
         }
+        const chatAction = e.target.closest('[data-chat-action]');
+        if (chatAction) {
+            const action = chatAction.dataset.chatAction;
+            const row = chatAction.closest('[data-message-id]');
+            if (action === 'cancel-reply') clearReply();
+            if (row && action === 'reply') startReply(row.dataset.messageId);
+            if (row && action === 'edit') editMessage(row.dataset.messageId);
+            if (row && action === 'delete') deleteMessage(row.dataset.messageId);
+        }
         const actionBtn = e.target.closest('[data-friend-action]');
         if (actionBtn) {
             try { await friendAction(actionBtn.dataset.friendAction, actionBtn.dataset.username); }
@@ -1292,7 +1376,7 @@ function initChat() {
         } catch (err) { addFriendMsg.textContent = err.message; }
     });
 
-    setInterval(() => { if (isLoggedIn) { loadContactsFromDB(); loadFriendsState(); } }, 5000);
+    setInterval(() => { if (isLoggedIn) { loadContactsFromDB(); loadFriendsState(); } }, 20000);
 
     if (searchInput) {        searchInput.addEventListener('input', (e) => handleSearchInput(e.target.value.trim()));
         searchInput.addEventListener('keydown', (e) => {
@@ -1589,227 +1673,7 @@ function initLanding() {
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
 }
-// ══════════════════════════════════════════════════════════
-//  SETTINGS
-//  Paste this entire block at the bottom of app.js,
-//  just ABOVE the existing "Boot" section, then add
-//  initSettings() to the DOMContentLoaded call list.
-// ══════════════════════════════════════════════════════════
 
-function initSettings() {
-    // Guard: only run on the settings page
-    if (!document.querySelector('.gs-sidebar')) return;
-
-    let settings = {}; // mirrors what's in the DB
-
-    // ── Toast helper ─────────────────────────────────────────
-    function showToast() {
-        const t = document.getElementById('settings-toast');
-        if (!t) return;
-        t.style.opacity = '1';
-        clearTimeout(t._timer);
-        t._timer = setTimeout(() => { t.style.opacity = '0'; }, 1800);
-    }
-
-    // ── Load settings from DB on page open ───────────────────
-    async function loadSettings() {
-        try {
-            const res  = await fetch('/api/settings', { credentials: 'same-origin' });
-            const data = await res.json();
-            if (!data.success) return;
-            settings = data;
-            applyToUI(data);
-        } catch (e) { console.warn('Failed to load settings:', e); }
-    }
-
-    // ── Load profile info for Account section display ────────
-    async function loadAccountDisplay() {
-        try {
-            const res  = await fetch('/api/me', { credentials: 'same-origin' });
-            const data = await res.json();
-            if (!data.logged_in) return;
-
-            const username = data.username;
-
-            // Username & avatar seed display
-            const usernameEl = document.getElementById('display-username');
-            const seedEl     = document.getElementById('display-avatar-seed');
-            if (usernameEl) usernameEl.textContent = username;
-            if (seedEl)     seedEl.textContent     = username;
-
-            // Update navbar avatar to match logged-in user
-            const avatarImg = document.querySelector('.avatar-img');
-            if (avatarImg) {
-                avatarImg.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(username)}`;
-                avatarImg.alt = username;
-            }
-
-            // Load profile for Discord / Steam display
-            const profRes  = await fetch('/api/profile', { credentials: 'same-origin' });
-            const profData = await profRes.json();
-            if (profData.success) {
-                const discordEl = document.getElementById('display-discord');
-                const steamEl   = document.getElementById('display-steam');
-                const chipD     = document.getElementById('chip-discord');
-                const chipS     = document.getElementById('chip-steam');
-
-                if (discordEl && profData.discord) {
-                    discordEl.textContent = profData.discord;
-                    if (chipD) { chipD.textContent = 'Linked'; chipD.classList.add('green'); }
-                }
-                if (steamEl && profData.steam_username) {
-                    steamEl.textContent = profData.steam_username;
-                    if (chipS) { chipS.textContent = 'Linked'; chipS.classList.add('green'); }
-                }
-            }
-        } catch (e) { console.warn('Failed to load account display:', e); }
-    }
-
-    // ── Push full state to DB ────────────────────────────────
-    async function saveSettings() {
-        try {
-            const res = await fetch('/api/settings', {
-                method:      'POST',
-                headers:     { 'Content-Type': 'application/json' },
-                credentials: 'same-origin',
-                body:        JSON.stringify(settings),
-            });
-            const data = await res.json();
-            if (data.success) showToast();
-        } catch (e) { console.warn('Failed to save settings:', e); }
-    }
-
-    // ── Apply DB values → UI ─────────────────────────────────
-    function applyToUI(s) {
-        setToggle('toggle-map-visible',    s.map_visible);
-        setToggle('toggle-show-status',    s.show_status);
-        setToggle('toggle-public-profile', s.public_profile);
-        setToggle('toggle-active-only',    s.active_only);
-        setToggle('toggle-notif-messages', s.notif_messages);
-        setToggle('toggle-notif-friends',  s.notif_friends);
-        setToggle('toggle-notif-events',   s.notif_events);
-        setToggle('toggle-notif-announce', s.notif_announce);
-        setToggle('toggle-start-hero',     s.start_hero);
-
-        const sel = document.getElementById('select-msg-permission');
-        if (sel) sel.value = s.msg_permission || 'everyone';
-
-        const slider = document.getElementById('rad');
-        const label  = document.getElementById('radVal');
-        if (slider) slider.value      = s.search_radius || 25;
-        if (label)  label.textContent = `${s.search_radius || 25} km`;
-    }
-
-    function setToggle(id, on) {
-        const el = document.getElementById(id);
-        if (!el) return;
-        el.classList.toggle('on', !!on);
-    }
-
-    // ── Toggle ID → settings key map ────────────────────────
-    const TOGGLE_MAP = {
-        'toggle-map-visible':    'map_visible',
-        'toggle-show-status':    'show_status',
-        'toggle-public-profile': 'public_profile',
-        'toggle-active-only':    'active_only',
-        'toggle-notif-messages': 'notif_messages',
-        'toggle-notif-friends':  'notif_friends',
-        'toggle-notif-events':   'notif_events',
-        'toggle-notif-announce': 'notif_announce',
-        'toggle-start-hero':     'start_hero',
-    };
-
-    // ── Toggle click handler ─────────────────────────────────
-    function handleToggleClick(e) {
-        const toggle = e.target.closest('.gs-toggle');
-        if (!toggle || !toggle.id) return;
-
-        const isOn = toggle.classList.toggle('on');
-        const key  = TOGGLE_MAP[toggle.id];
-        if (!key) return;
-
-        settings[key] = isOn;
-        saveSettings();
-
-        // Real-time side effects
-        if (key === 'map_visible' && window.parent?.setDemoVisible) {
-            window.parent.setDemoVisible(isOn);
-        }
-    }
-
-    // ── Select change handler ────────────────────────────────
-    function handleSelectChange(e) {
-        if (e.target.id === 'select-msg-permission') {
-            settings.msg_permission = e.target.value;
-            saveSettings();
-        }
-    }
-
-    // ── Slider: live label update, save on release ───────────
-    function wireSlider() {
-        const slider = document.getElementById('rad');
-        const label  = document.getElementById('radVal');
-        if (!slider) return;
-        slider.addEventListener('input', () => {
-            if (label) label.textContent = `${slider.value} km`;
-            settings.search_radius = parseInt(slider.value, 10);
-        });
-        // Save only when the user releases to avoid hammering the DB
-        slider.addEventListener('change', () => {
-            settings.search_radius = parseInt(slider.value, 10);
-            saveSettings();
-        });
-    }
-
-    // ── Sidebar nav: highlight + smooth scroll ───────────────
-    function wireSidebarNav() {
-        document.querySelectorAll('.gs-nav-item[data-section]').forEach(item => {
-            item.addEventListener('click', () => {
-                document.querySelectorAll('.gs-nav-item').forEach(i => i.classList.remove('active'));
-                item.classList.add('active');
-                const target = document.getElementById(item.dataset.section);
-                if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            });
-        });
-    }
-
-    // ── Back button ──────────────────────────────────────────
-    document.getElementById('settingsBackBtn')?.addEventListener('click', () => {
-        if (window.parent?.closeModalPage) window.parent.closeModalPage();
-        else history.back();
-    });
-
-    // ── Delete account (placeholder) ────────────────────────
-    document.getElementById('deleteAccountBtn')?.addEventListener('click', () => {
-        if (confirm('Are you sure you want to delete your account? This cannot be undone.')) {
-            // TODO: call DELETE /api/account when that endpoint exists
-            alert('Account deletion not yet implemented.');
-        }
-    });
-
-    // ── Boot ─────────────────────────────────────────────────
-    document.addEventListener('click',  handleToggleClick);
-    document.addEventListener('change', handleSelectChange);
-    wireSidebarNav();
-    wireSlider();
-    loadSettings();
-    loadAccountDisplay();
-}
-
-
-// ══════════════════════════════════════════════════════════
-//  Boot  (REPLACE the existing Boot block at the bottom of
-//  app.js with this one — only change is initSettings() added)
-// ══════════════════════════════════════════════════════════
-document.addEventListener('DOMContentLoaded', () => {
-    initLogin();
-    initRegister();
-    initProfile();      // includes initVisibilityToggle()
-    initSteamSearch();  // Steam game search modal
-    initChat();         // full chat with auto-connect, typing, mobile panels
-    initLanding();      // Three.js globe scroll effect
-    initSettings();     // ← NEW
-});
 
 //  Boot 
 document.addEventListener('DOMContentLoaded', () => {
@@ -1819,5 +1683,4 @@ document.addEventListener('DOMContentLoaded', () => {
     initSteamSearch();  // Steam game search modal
     initChat();         // full chat with auto-connect, typing, mobile panels
     initLanding();      // Three.js globe (AI-generated scroll effect)
-    initSettings();     // user settings page with DB sync
 });

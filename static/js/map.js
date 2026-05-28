@@ -1,29 +1,25 @@
 // map.js GameScape map page
-// MERGED: old version used as primary base (avatar markers, events system,
-// mini-profile popup, custom selects, demo visibility).
-// URL paths updated from old flat-file scheme to new Flask route scheme.
-console.log('[map.js] loaded', Date.now());
+// Main map page with avatar markers, events and profile popups.
+
 const MAPTILER_KEY   = 'qXZMMqoofeJQqdk8nsv1';
 const MAPTILER_STYLE = `https://api.maptiler.com/maps/019d1f6a-0bb2-7db3-a9c7-670e85ac0f84/style.json?key=${MAPTILER_KEY}`;
 
-// Steam API key (kept from new project for future live player data integration)
+// Steam API key for game data
 const STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E';
 
 // Hardcoded demo players. Each has avatarSeed (DiceBear), location (for filter),
 // mapVisible flag, and isDemo (marks the logged-in user's stand-in marker).
 const PLAYERS = [
-    { id: -1,  gamertag: 'NightOwl_SE',   games: ['Valorant', 'CS2'],            rank: 'Diamond',    status: 'active',  lng: 13.002, lat: 55.607, lastActive: 'Just now',   age: 24, location: 'malmo',     avatarSeed: 'nightowl',    mapVisible: true },
-    { id: -2,  gamertag: 'ProPlayer_99',  games: ['Minecraft', 'Fortnite'],       rank: 'Gold',       status: 'recent',  lng: 13.018, lat: 55.612, lastActive: '12 min ago',  age: 19, location: 'malmo',     avatarSeed: 'proplayer',   mapVisible: true },
-    { id: -3,  gamertag: 'ZeroGrav',      games: ['League of Legends'],           rank: 'Platinum',   status: 'active',  lng: 12.995, lat: 55.598, lastActive: 'Just now',   age: 28, location: 'goteborg',  avatarSeed: 'zerograv',    mapVisible: true },
-    { id: -4,  gamertag: 'StealthMode_K', games: ['Valorant', 'Apex Legends'],    rank: 'Challenger', status: 'active',  lng: 13.010, lat: 55.615, lastActive: 'Just now',   age: 22, location: 'stockholm', avatarSeed: 'stealth',     mapVisible: true },
-    { id: -5,  gamertag: 'CasualGamer88', games: ['Minecraft'],                   rank: 'Unranked',   status: 'recent',  lng: 13.025, lat: 55.595, lastActive: '1 hour ago', age: 31, location: 'goteborg',  avatarSeed: 'casualgamer', mapVisible: true },
-    { id: -6,  gamertag: 'SniperWolf',    games: ['CS2', 'Valorant'],             rank: 'Master',     status: 'active',  lng: 13.005, lat: 55.600, lastActive: 'Just now',   age: 26, location: 'malmo',     avatarSeed: 'sniperwolf',  mapVisible: true },
-    { id: -7,  gamertag: 'NoobMaster69',  games: ['Fortnite'],                    rank: 'Silver',     status: 'offline', lng: 13.015, lat: 55.620, lastActive: '2 days ago', age: 17, location: 'stockholm', avatarSeed: 'noobmaster',  mapVisible: true },
+    { id: 1,  gamertag: 'NightOwl_SE',   games: ['Valorant', 'CS2'],            rank: 'Diamond',    status: 'active',  lng: 13.002, lat: 55.607, lastActive: 'Just now',   age: 24, location: 'malmo',     avatarSeed: 'nightowl',    mapVisible: true },
+    { id: 2,  gamertag: 'ProPlayer_99',  games: ['Minecraft', 'Fortnite'],       rank: 'Gold',       status: 'recent',  lng: 13.018, lat: 55.612, lastActive: '12 min ago',  age: 19, location: 'malmo',     avatarSeed: 'proplayer',   mapVisible: true },
+    { id: 3,  gamertag: 'ZeroGrav',      games: ['League of Legends'],           rank: 'Platinum',   status: 'active',  lng: 12.995, lat: 55.598, lastActive: 'Just now',   age: 28, location: 'goteborg',  avatarSeed: 'zerograv',    mapVisible: true },
+    { id: 4,  gamertag: 'StealthMode_K', games: ['Valorant', 'Apex Legends'],    rank: 'Challenger', status: 'active',  lng: 13.010, lat: 55.615, lastActive: 'Just now',   age: 22, location: 'stockholm', avatarSeed: 'stealth',     mapVisible: true },
+    { id: 5,  gamertag: 'CasualGamer88', games: ['Minecraft'],                   rank: 'Unranked',   status: 'recent',  lng: 13.025, lat: 55.595, lastActive: '1 hour ago', age: 31, location: 'goteborg',  avatarSeed: 'casualgamer', mapVisible: true },
+    { id: 6,  gamertag: 'SniperWolf',    games: ['CS2', 'Valorant'],             rank: 'Master',     status: 'active',  lng: 13.005, lat: 55.600, lastActive: 'Just now',   age: 26, location: 'malmo',     avatarSeed: 'sniperwolf',  mapVisible: true },
+    { id: 7,  gamertag: 'NoobMaster69',  games: ['Fortnite'],                    rank: 'Silver',     status: 'offline', lng: 13.015, lat: 55.620, lastActive: '2 days ago', age: 17, location: 'stockholm', avatarSeed: 'noobmaster',  mapVisible: true },
     // Demo player represents the logged-in user on the map
-    { id: -99, gamertag: 'Demo',          games: ['Valorant', 'CS2', 'Fortnite'], rank: 'Gold',       status: 'active',  lng: 13.008, lat: 55.603, lastActive: 'Just now',   age: 22, location: 'malmo',     avatarSeed: 'GameScape',   mapVisible: true, isDemo: true },
+    { id: 99, gamertag: 'Demo',          games: ['Valorant', 'CS2', 'Fortnite'], rank: 'Gold',       status: 'active',  lng: 13.008, lat: 55.603, lastActive: 'Just now',   age: 22, location: 'malmo',     avatarSeed: 'GameScape',   mapVisible: true, isDemo: true },
 ];
-
-
 
 //  Demo visibility (eye icon in profile page) 
 // Persisted in localStorage so the preference survives page refresh.
@@ -35,21 +31,16 @@ function getDemoVisible() {
 }
 
 window.livePlayers = null;
-window.currentPlayersForMap = function () {
-    if (Array.isArray(window.livePlayers) && window.livePlayers.length > 0) {
-        return window.livePlayers;
-    }
-    return getVisiblePlayers(); // demo-listan (respekterar demo visibility)
+
+window.currentPlayersForMap = function() {
+    return window.livePlayers || getVisiblePlayers();
 };
-
-
 
 // Called by profile.js (inside iframe) via window.setDemoVisible().
 function setDemoVisible(val) {
     localStorage.setItem(DEMO_VISIBLE_KEY, String(val));
     const demo = PLAYERS.find(p => p.isDemo);
     if (demo) demo.mapVisible = val;
-
     renderMapMarkers(window.currentPlayersForMap());
     refreshEventMarkers();
 }
@@ -82,6 +73,7 @@ map.addControl(new maplibregl.NavigationControl({
 let isLoggedIn      = false;
 let currentUsername = null;
 let currentAvatarSeed = null;
+let mapSocket = null;
 
 function dicebearAvatar(seed) {
     return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
@@ -102,7 +94,7 @@ async function mapFriendAction(action, username) {
     const res = await fetch(url, options);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) throw new Error(data.error || 'Friend action failed');
-    // await loadLivePlayers();
+    await loadLivePlayers();
 }
 
 function mapFriendActions(player) {
@@ -126,6 +118,7 @@ function refreshPlayerAvatar(player) {
 }
 
 
+
 // Updates global login state and refreshes the avatar + menu button text.
 // Also updates the demo player's gamertag to match the logged-in user.
 function setLoggedIn(status, username, avatarSeed) {
@@ -144,8 +137,11 @@ function setLoggedIn(status, username, avatarSeed) {
     if (status && username) {
         const demo = PLAYERS.find(p => p.isDemo);
         if (demo) { demo.gamertag = username; demo.avatarSeed = currentAvatarSeed; refreshPlayerAvatar(demo); }
-        renderMapMarkers(window.currentPlayersForMap());
-        sendMapPresence();
+        renderMapMarkers(getVisiblePlayers());
+        sendMapPresence().then(() => {
+            connectMapSocket();
+            loadLivePlayers();
+        });
     }
 }
 
@@ -154,25 +150,38 @@ async function checkSession() {
     try {
         const res  = await fetch('/api/me', { credentials: 'same-origin' });
         const data = await res.json();
-
-        if (data.logged_in) {
-            window.myUserId = data.user_id;
-            setLoggedIn(true, data.username, data.avatar_seed);
-        }
+        if (data.logged_in) setLoggedIn(true, data.username, data.avatar_seed);
     } catch (e) { console.warn('Session check failed:', e); }
 }
-function sendMapPresence() {
-    if (!isLoggedIn) return;
 
-    // Skicka INGEN lat/lng -> backend touchar bara last_active/is_online
-    fetch('/api/presence', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({})
-    }).catch(() => {});
+// Server picks the IP location and keeps one randomized position for this login session.
+async function sendMapPresence() {
+    if (!isLoggedIn) return;
+    try {
+        const res = await fetch('/api/map/presence', { method: 'POST', credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        const demo = PLAYERS.find(p => p.isDemo);
+        if (data.success && demo && data.lat != null && data.lng != null) {
+            demo.lat = Number(data.lat);
+            demo.lng = Number(data.lng);
+            renderMapMarkers(getVisiblePlayers());
+        } else if (data.error) console.warn('Map presence failed:', data.error);
+    } catch (e) { console.warn('Map presence failed:', e); }
 }
 
+// Keeps the map updated when other users move or come online.
+function connectMapSocket() {
+    if (mapSocket || !window.WebSocket) return;
+    const protocol = location.protocol === 'https:' ? 'wss' : 'ws';
+    mapSocket = new WebSocket(`${protocol}://${location.host}/ws/map`);
+    mapSocket.onmessage = e => {
+        const msg = JSON.parse(e.data);
+        if (!msg.type || msg.type === 'players_snapshot') applyLivePlayers(msg.players || []);
+    };
+    mapSocket.onclose = () => { mapSocket = null; };
+}
+
+// Merges server players into the existing demo/player list.
 function mergeLivePlayer(player) {
     const existing = PLAYERS.find(p => p.id === player.id);
     const mapped = {
@@ -188,7 +197,7 @@ function mergeLivePlayer(player) {
         location: player.location || 'malmo',
         avatarSeed: player.avatarSeed || player.gamertag || player.username,
         mapVisible: true,
-        friendship_status: player.friendship_status || 'none',
+        friendship_status: player.friendship_status || (existing && existing.friendship_status) || 'none',
         is_self: !!player.is_self,
         isLive: true
     };
@@ -201,38 +210,34 @@ function mergeLivePlayer(player) {
     else PLAYERS.push(mapped);
 }
 
-async function loadLivePlayers() {
-    return; // WS-only: polling avstängt
+function applyLivePlayers(players) {
+    const liveIds = new Set();
+    const incoming = spreadOverlappingPlayers(players || []);
+    incoming.forEach(p => { liveIds.add(p.id); mergeLivePlayer(p); });
+    for (let i = PLAYERS.length - 1; i >= 0; i--) {
+        if (PLAYERS[i].isLive && !PLAYERS[i].isDemo && !liveIds.has(PLAYERS[i].id)) PLAYERS.splice(i, 1);
+    }
+    window.livePlayers = PLAYERS.filter(p => p.isLive || p.isDemo);
+    renderMapMarkers(window.currentPlayersForMap());
+    refreshEventMarkers?.();
+}
 
+// Fallback fetch so the map still loads if the socket is late.
+async function loadLivePlayers() {
     try {
         const res = await fetch('/api/players', { credentials: 'same-origin' });
         const data = await res.json();
         if (!data.success) return;
-
-        const incoming = (data.players || []);
-
-        if (incoming.length > 0) {
-            window.livePlayers = spreadOverlappingPlayers(
-                incoming.map(p => ({ ...p, mapVisible: true }))
-            );
-        } else {
-            window.livePlayers = null; // fallback till demo
-        }
-
-        renderMapMarkers(window.currentPlayersForMap());
-        refreshEventMarkers?.();
-    } catch (e) {
-        console.warn('Failed to load live players:', e);
-    }
+        applyLivePlayers(data.players || []);
+    } catch (e) { console.warn('Failed to load live players:', e); }
 }
 
 
 //  Modal helpers 
 // Opens any page (login / register / profile) in a centered iframe overlay.
-// UPDATED: URLs now use Flask routes (/login, /register, /profile) instead
-// of the old flat-file paths (login/login.html, etc.).
+// Opens login, register and profile pages in the modal.
 
-function openModalPage(page, wide = false) {
+function openModalPage(page) {
     let overlay = document.getElementById('modalOverlay');
     if (!overlay) {
         overlay           = document.createElement('div');
@@ -248,8 +253,6 @@ function openModalPage(page, wide = false) {
         frame.className = 'modal-frame';
         document.body.appendChild(frame);
     }
-    // Toggle the wide class based on the caller's request
-    frame.classList.toggle('wide', wide);
     frame.src = page;
     overlay.classList.add('show');
     frame.classList.add('show');
@@ -384,14 +387,11 @@ function renderMapMarkers(playerList) {
     });
     updatePlayerCount(playerList);
 }
-/*
-map.on('load', () => {
-    renderMapMarkers(window.currentPlayersForMap());
-});
-*/
 
 map.on('load', () => {
     renderMapMarkers(window.currentPlayersForMap());
+    connectMapSocket();
+    loadLivePlayers();
 });
 
 map.on('error', (e) => {
@@ -687,21 +687,21 @@ async function handleLogout() {
     try { await fetch('/api/logout', { method: 'POST', credentials: 'same-origin' }); }
     catch (e) { console.warn('Logout failed:', e); }
     setLoggedIn(false, null);
+    if (mapSocket) { mapSocket.close(); mapSocket = null; }
     // Refresh admin panel after logout
     if (window.checkAdmin) window.checkAdmin();
     alert('Logged out successfully');
 }
 
-// UPDATED: URL paths use Flask routes instead of old flat-file paths
+// Menu links
 function handleMenuClick(page) {
     closeMenu();
     switch (page) {
         case 'home':          map.invalidateSize(); break;
-        case 'chat':          window.location.href = '/chat'; break;          // UPDATED
+        case 'chat':          window.location.href = '/chat'; break;
         case 'notifications': alert('Notifications coming soon'); break;
-        case 'settings': openModalPage('/settings'); break;     
-        case 'login':         isLoggedIn ? handleLogout() : openModalPage('/login'); break; // UPDATED
-        case 'settings': openModalPage('/settings', true); break;       
+        case 'settings':      openModalPage('/settings'); break;
+        case 'login':         isLoggedIn ? handleLogout() : openModalPage('/login'); break;
     }
 }
 
@@ -778,7 +778,7 @@ function initCustomSelects() {
 }
 
 
-//  Admin panel (RESTORED from old project) 
+//  Admin panel 
 // Checks the session role and shows/hides the admin panel accordingly.
 // Also loads the event list so admins can delete events from the map page.
 
@@ -834,14 +834,10 @@ window.addGame = addGame;
 
 //  DOMContentLoaded 
 
-
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('[map.js] DOMContentLoaded', Date.now());
-
     document.getElementById('hamburgerBtn')?.addEventListener('click', toggleMenu);
     document.getElementById('menuCloseBtn')?.addEventListener('click', closeMenu);
     document.getElementById('menuOverlay')?.addEventListener('click', closeMenu);
-
 
     document.querySelectorAll('.menu-items li').forEach(item => {
         item.addEventListener('click', (e) => {
@@ -869,12 +865,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
     updateLoginLogoutButton();
     checkSession();
-    setInterval(() => { sendMapPresence(); }, 8000);
+    setInterval(sendMapPresence, 15000);
     checkAdmin();         // show admin panel for admins
     initEventSystem();    // event creation button + form
     initCustomSelects();  // custom glassy dropdowns
-    initMapWebSocket();
-
     updateLocationCounts(); // city player counts
 
     // Auto-open login modal if redirected here with ?login=1 (e.g. from chat page)
@@ -888,13 +882,16 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
-//  EVENT SYSTEM (FULLY RESTORED)
+//  Event system
 //  Lets logged-in users post a gaming event that appears as a pulsing
 //  green ring on the map behind their marker. Other players can click
 //  the marker to see a green event popup with time and game details.
 
 // Pre-loaded demo events so the map isn't empty on first visit
-let activeEvents = [];
+let activeEvents = [
+    { playerId: 1, eventName: 'Friday Ranked Grind', gameName: 'Valorant', startHour: 8,  startMin: 0,  startAmPm: 'PM', hasEnd: false },
+    { playerId: 6, eventName: 'CS2 5v5 Scrim',       gameName: 'CS2',      startHour: 9,  startMin: 30, startAmPm: 'PM', hasEnd: true, endHour: 11, endMin: 0, endAmPm: 'PM' }
+];
 
 const pulseMarkers = {}; // playerId → removal handle
 
@@ -1039,280 +1036,143 @@ function buildTimePicker(initH = 8, initM = 0, initAmPm = 'PM') {
 //  initEventSystem 
 // Injects the green "+" button and the event creation form overlay into the map area.
 // Also wires up submit logic and draws initial pulse rings for demo events.
+
 function initEventSystem() {
     const mapArea = document.querySelector('.map-area');
     if (!mapArea) return;
 
     // + button
-    const addBtn = document.createElement('button');
+    const addBtn   = document.createElement('button');
     addBtn.className = 'event-add-btn';
     addBtn.innerHTML = '+';
-    addBtn.title = 'Create Event';
+    addBtn.title     = 'Create Event';
     mapArea.appendChild(addBtn);
 
-    addBtn.onclick = () => window.openDynamicEventForm();
+    // Form overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'event-form-overlay';
+    overlay.id        = 'eventFormOverlay';
+    overlay.innerHTML = `
+        <div class="event-form-card">
+            <button class="event-form-close" id="eventFormClose">✕</button>
+            <div class="event-form-title">Create Event</div>
+            <div class="event-form-subtitle">Let nearby players find and join you</div>
+            <div class="event-form-error" id="eventFormError"></div>
+            <div class="event-field"><label>Event Name</label><input class="event-input" id="evtName" type="text" placeholder="e.g. Friday Ranked Grind"></div>
+            <div class="event-field"><label>Game</label><input class="event-input" id="evtGame" type="text" placeholder="e.g. Valorant, CS2, Minecraft"></div>
+            <div class="event-field"><label>Start Time</label><div id="evtStartPicker"></div></div>
+            <div class="event-field">
+                <label>End Time <span class="event-label-note">(optional)</span></label>
+                <div id="evtEndPicker"></div>
+                <p class="event-field-note">Leave unchanged and the event auto-closes after 2 hours.</p>
+            </div>
+            <button class="event-submit-btn" id="eventSubmitBtn">Start Event</button>
+        </div>`;
+    mapArea.appendChild(overlay);
 
-    window.openDynamicEventForm = function () {
-        if (!isLoggedIn) {
-            alert('Please login first to create an event');
-            openModalPage('/login');
+    // Helpers
+    function to24mins(h, m, ap) {
+        let hour = h % 12;
+        if (ap === 'PM') hour += 12;
+        return hour * 60 + m;
+    }
+    function nowRounded() {
+        const now = new Date();
+        let h = now.getHours(), m = Math.ceil(now.getMinutes() / 5) * 5;
+        if (m === 60) { m = 0; h = (h + 1) % 24; }
+        return { h12: h % 12 || 12, m, ap: h >= 12 ? 'PM' : 'AM', totalMins: h * 60 + m };
+    }
+    function addMins(total, add) {
+        const t   = (total + add) % 1440;
+        const h24 = Math.floor(t / 60);
+        return { h12: h24 % 12 || 12, m: t % 60, ap: h24 >= 12 ? 'PM' : 'AM' };
+    }
+
+    const seed    = nowRounded();
+    const endSeed = addMins(seed.totalMins, 120);
+    const endMr   = Math.round(endSeed.m / 5) * 5 % 60;
+
+    const startPicker = buildTimePicker(seed.h12, seed.m, seed.ap);
+    const endPicker   = buildTimePicker(endSeed.h12, endMr, endSeed.ap);
+    document.getElementById('evtStartPicker').appendChild(startPicker.el);
+    document.getElementById('evtEndPicker').appendChild(endPicker.el);
+
+    // Open / close
+    addBtn.addEventListener('click', () => {
+        if (!isLoggedIn) { alert('Please login first to create an event'); openModalPage('/login'); return; }
+        overlay.classList.add('show');
+    });
+    document.getElementById('eventFormClose').addEventListener('click', () => overlay.classList.remove('show'));
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.classList.remove('show'); });
+
+    // Submit
+    document.getElementById('eventSubmitBtn').addEventListener('click', () => {
+        const name  = document.getElementById('evtName').value.trim();
+        const game  = document.getElementById('evtGame').value.trim();
+        const errEl = document.getElementById('eventFormError');
+
+        if (!name || !game) {
+            errEl.textContent = 'Please fill in both Event Name and Game.';
+            errEl.style.display = 'block';
             return;
         }
-        if (document.getElementById('eventFormOverlay')) return;
 
-        // Helpers
-        function to24mins(h, m, ap) {
-            let hour = h % 12;
-            if (ap === 'PM') hour += 12;
-            return hour * 60 + m;
-        }
-        function nowRounded() {
-            const now = new Date();
-            let h = now.getHours(), m = Math.ceil(now.getMinutes() / 5) * 5;
-            if (m === 60) { m = 0; h = (h + 1) % 24; }
-            return { h12: h % 12 || 12, m, ap: h >= 12 ? 'PM' : 'AM', totalMins: h * 60 + m };
-        }
-        function addMins(total, add) {
-            const t = (total + add) % 1440;
-            const h24 = Math.floor(t / 60);
-            return { h12: h24 % 12 || 12, m: t % 60, ap: h24 >= 12 ? 'PM' : 'AM' };
+        const startH  = startPicker.getHour(), startM  = startPicker.getMin(), startAp = startPicker.getAmPm();
+        const endH    = endPicker.getHour(),   endM    = endPicker.getMin(),   endAp   = endPicker.getAmPm();
+
+        const nowMins   = new Date().getHours() * 60 + new Date().getMinutes();
+        const startMins = to24mins(startH, startM, startAp);
+
+        if (startMins < nowMins) {
+            errEl.textContent = `Start time ${startH}:${String(startM).padStart(2,'0')} ${startAp} is in the past.`;
+            errEl.style.display = 'block';
+            return;
         }
 
-        const seed = nowRounded();
-        const endSeed = addMins(seed.totalMins, 120);
-        const endMr = Math.round(endSeed.m / 5) * 5 % 60;
+        const endMins  = to24mins(endH, endM, endAp);
+        // The user hasn't touched the end picker if its current values still match
+        // the initial seed we pre-filled it with treat that as "no end time set".
+        const hasEnd   = !(endH === endSeed.h12 && endM === endMr && endAp === endSeed.ap);
+        if (hasEnd && endMins <= startMins) {
+            errEl.textContent = 'End time must be after the start time.';
+            errEl.style.display = 'block';
+            return;
+        }
 
-        // Overlay
-        const overlay = document.createElement('div');
-        overlay.className = 'event-form-overlay show';
-        overlay.id = 'eventFormOverlay';
-        overlay.innerHTML = `
-            <div class="event-form-card">
-                <button class="event-form-close" id="eventFormClose">✕</button>
+        errEl.style.display = 'none';
 
-                <div class="event-form-title">Create Event</div>
-                <div class="event-form-subtitle">Let nearby players find and join you</div>
-                <div class="event-form-error" id="eventFormError" style="color:#fca5a5; display:none; font-size:13px; margin-bottom:10px;"></div>
+        const demo       = PLAYERS.find(p => p.isDemo);
+        const demoId     = demo ? demo.id : 99;
+        activeEvents     = activeEvents.filter(e => e.playerId !== demoId);
+        activeEvents.push({ playerId: demoId, eventName: name, gameName: game,
+            startHour: startH, startMin: startM, startAmPm: startAp,
+            hasEnd, endHour: endH, endMin: endM, endAmPm: endAp });
 
-                <div class="event-field">
-                    <label>Event Name *</label>
-                    <input class="event-input" id="evtName" type="text" placeholder="e.g. Friday Ranked Grind">
-                </div>
+        overlay.classList.remove('show');
+        document.getElementById('evtName').value = '';
+        document.getElementById('evtGame').value = '';
+        refreshEventMarkers();
+    });
 
-                <div class="event-field" style="position: relative;">
-                    <label>Game (Steam Live Search) *</label>
-                    <input class="event-input" id="evtGame" type="text" placeholder="e.g. Valorant, CS2, Minecraft">
-                    <input type="hidden" id="evtAppid" value="">
-                    <div id="evtSteamResults" class="steam-results" style="display:none; position:absolute; width:100%; max-height:200px; overflow-y:auto; z-index:1000; background:#1e1f22; border:1px solid rgba(155,89,182,0.4); border-radius:8px; margin-top:5px;"></div>
-                </div>
-
-                <div class="event-field">
-                    <label>Description</label>
-                    <textarea class="edit-input" id="evtDesc" rows="2"
-                        placeholder="What are we doing?"
-                        style="width:100%; font-family:inherit; background:rgba(30,31,34,0.7); border:1px solid rgba(255,255,255,0.1); color:#fff; padding:8px; border-radius:6px; resize:none;"></textarea>
-                </div>
-
-                <div style="display:flex; gap:10px;">
-                    <div class="event-field" style="flex:1;">
-                        <label>Min Rank</label>
-                        <input class="event-input" id="evtMinRank" type="text" placeholder="e.g. Gold">
-                    </div>
-                    <div class="event-field" style="flex:1;">
-                        <label>Max Rank</label>
-                        <input class="event-input" id="evtMaxRank" type="text" placeholder="e.g. Global">
-                    </div>
-                </div>
-
-                <div class="event-field">
-                    <label>Start Time *</label>
-                    <div id="evtStartPicker"></div>
-                </div>
-
-                <div class="event-field">
-                    <label>End Time <span class="event-label-note">(optional)</span></label>
-                    <div id="evtEndPicker"></div>
-                    <p class="event-field-note" style="font-size:11px; color:#aaa; margin-top:4px;">
-                        Leave unchanged and the event auto-closes after 2 hours.
-                    </p>
-                </div>
-
-                <button class="event-submit-btn" id="eventSubmitBtn" style="margin-top:15px;">Start Event</button>
-            </div>
-        `;
-        mapArea.appendChild(overlay);
-
-        const startPicker = buildTimePicker(seed.h12, seed.m, seed.ap);
-        const endPicker = buildTimePicker(endSeed.h12, endMr, endSeed.ap);
-        document.getElementById('evtStartPicker').appendChild(startPicker.el);
-        document.getElementById('evtEndPicker').appendChild(endPicker.el);
-
-        const closeBtn = document.getElementById('eventFormClose');
-        const gameInput = document.getElementById('evtGame');
-        const resultsDiv = document.getElementById('evtSteamResults');
-        const submitBtn = document.getElementById('eventSubmitBtn');
-        const appidInput = document.getElementById('evtAppid');
-        const errorDiv = document.getElementById('eventFormError');
-
-        closeBtn.onclick = () => overlay.remove();
-        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
-
-        // Steam live search
-        let searchTimer = null;
-        gameInput.addEventListener('input', () => {
-            clearTimeout(searchTimer);
-            const query = gameInput.value.trim();
-
-            if (query.length < 2) {
-                resultsDiv.innerHTML = '';
-                resultsDiv.style.display = 'none';
-                appidInput.value = '';
-                return;
-            }
-
-            searchTimer = setTimeout(async () => {
-                try {
-                    const res = await fetch(`/api/steam/search?q=${encodeURIComponent(query)}`);
-                    const data = await res.json();
-
-                    resultsDiv.style.display = 'block';
-                    if (data.success && (data.results || []).length > 0) {
-                        resultsDiv.innerHTML = data.results.map(game => {
-                            const escapedName = String(game.name || '').replace(/'/g, "\\'").replace(/"/g, '&quot;');
-                            return `
-                                <div class="steam-result-row"
-                                     style="padding:8px; display:flex; align-items:center; gap:10px; cursor:pointer;"
-                                     onclick="selectSteamGameForEvent(${game.appid}, '${escapedName}')">
-                                    <img src="${game.icon_url}" width="32" height="32" style="border-radius:4px; object-fit:cover;">
-                                    <div style="font-size:14px; color:#fff;">${game.name}</div>
-                                </div>`;
-                        }).join('');
-                    } else {
-                        resultsDiv.innerHTML = '<div style="padding:8px; color:#aaa; font-size:12px;">No games found</div>';
-                    }
-                } catch (err) {
-                    console.error('Steam search error:', err);
-                }
-            }, 400);
-        });
-
-        window.selectSteamGameForEvent = function (appid, name) {
-            gameInput.value = name;
-            appidInput.value = appid;
-            resultsDiv.innerHTML = '';
-            resultsDiv.style.display = 'none';
-        };
-
-        document.addEventListener('click', (e) => {
-            if (e.target !== gameInput && e.target !== resultsDiv) {
-                resultsDiv.style.display = 'none';
-            }
-        });
-
-        // Submit -> backend
-        submitBtn.onclick = async () => {
-            const title = document.getElementById('evtName').value.trim();
-            const appid = appidInput.value;
-            const description = document.getElementById('evtDesc').value.trim();
-            const min_rank = document.getElementById('evtMinRank').value.trim();
-            const max_rank = document.getElementById('evtMaxRank').value.trim();
-
-            if (!title || !appid) {
-                errorDiv.textContent = 'Please fill in Event Name and select a game from the Steam list.';
-                errorDiv.style.display = 'block';
-                return;
-            }
-
-            const startH = startPicker.getHour(), startM = startPicker.getMin(), startAp = startPicker.getAmPm();
-            const endH = endPicker.getHour(), endM = endPicker.getMin(), endAp = endPicker.getAmPm();
-
-            const nowMins = new Date().getHours() * 60 + new Date().getMinutes();
-            const startMins = to24mins(startH, startM, startAp);
-            if (startMins < nowMins) {
-                errorDiv.textContent = 'Start time is in the past.';
-                errorDiv.style.display = 'block';
-                return;
-            }
-
-            const endMins = to24mins(endH, endM, endAp);
-            const hasEnd = !(endH === endSeed.h12 && endM === endMr && endAp === endSeed.ap);
-            if (hasEnd && endMins <= startMins) {
-                errorDiv.textContent = 'End time must be after the start time.';
-                errorDiv.style.display = 'block';
-                return;
-            }
-
-            errorDiv.style.display = 'none';
-
-            const now = new Date();
-            const startHour24 = (startAp === 'AM')
-                ? (startH === 12 ? 0 : startH)
-                : (startH === 12 ? 12 : startH + 12);
-
-            const startDate = new Date(
-                now.getFullYear(),
-                now.getMonth(),
-                now.getDate(),
-                startHour24,
-                startM
-            );
-
-            const payload = {
-                title,
-                appid: parseInt(appid, 10),
-                datetime: startDate.toISOString(),
-                description,
-                min_rank: min_rank || null,
-                max_rank: max_rank || null
-            };
-
-            try {
-                const response = await fetch('/create_event', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const resData = await response.json();
-
-                if (!response.ok) {
-                    errorDiv.textContent = resData.error || 'Failed to create event.';
-                    errorDiv.style.display = 'block';
-                    return;
-                }
-
-                const myId = window.myUserId;
-                if (!myId) { alert('Missing user id'); return; }
-
-                activeEvents = activeEvents.filter(e => e.playerId !== myId);
-                activeEvents.push({
-                    playerId: myId,
-                    eventName: title,
-                    gameName: gameInput.value.trim(),
-                    startHour: startH,
-                    startMin: startM,
-                    startAmPm: startAp,
-                    hasEnd,
-                    endHour: endH,
-                    endMin: endM,
-                    endAmPm: endAp
-                });
-
-                overlay.remove();
-                refreshEventMarkers?.();
-                loadAdminEvents?.();
-                alert('Event created successfully!');
-            } catch (err) {
-                errorDiv.textContent = err.message || 'Server error connection failed.';
-                errorDiv.style.display = 'block';
-            }
-        };
-    };
-
-    // Draw initial rings when markers exist
+    // Draw initial pulse rings once the map markers are ready
     map.on('load', () => setTimeout(refreshEventMarkers, 500));
     if (map.loaded()) setTimeout(refreshEventMarkers, 300);
 }
 
+
+function spreadOverlappingPlayers(players) {
+    const seen = new Map();
+    return players.map(p => {
+        const key = `${Number(p.lat).toFixed(5)},${Number(p.lng).toFixed(5)}`;
+        const i = seen.get(key) || 0;
+        seen.set(key, i + 1);
+        if (!i) return p;
+
+        const r = 0.00012 * Math.ceil(i / 6);
+        const a = (i % 6) * (Math.PI * 2 / 6);
+        return { ...p, lat: p.lat + Math.sin(a) * r, lng: p.lng + Math.cos(a) * r };
+    });
+}
 
 // Redraws pulse rings on all players who currently have an active event.
 // Rings are injected into the avatar marker element so they stay centred on pan/zoom.
@@ -1323,7 +1183,7 @@ function refreshEventMarkers() {
     Object.keys(pulseMarkers).forEach(k => delete pulseMarkers[k]);
 
     activeEvents.forEach(evt => {
-        const player = window.currentPlayersForMap().find(p => p.id === evt.playerId);
+        const player     = window.currentPlayersForMap().find(p => p.id === evt.playerId);
         if (!player) return;
         const markerData = playerMarkers[player.id];
         if (!markerData) return;
@@ -1342,70 +1202,4 @@ function refreshEventMarkers() {
             }
         };
     });
-}
-function spreadOverlappingPlayers(players) {
-    const seen = new Map(); // "lat,lng" -> count
-    return players.map(p => {
-        const key = `${p.lat},${p.lng}`;
-        const i = (seen.get(key) || 0);
-        seen.set(key, i + 1);
-        if (i === 0) return p;
-
-        // liten offset i "cirkel" runt punkten (~5–20 meter)
-        const r = 0.00012 * Math.ceil(i / 6);
-        const a = (i % 6) * (Math.PI * 2 / 6);
-        return {
-            ...p,
-            lat: p.lat + Math.sin(a) * r,
-            lng: p.lng + Math.cos(a) * r,
-        };
-    });
-}
-
-
-function initMapWebSocket() {
-    console.log('[map.js] initMapWebSocket called', Date.now());
-
-    const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${proto}//${window.location.host}/ws/map`);
-
-    window._mapWs = ws;
-    console.log('[map ws] init', ws.url);
-
-    ws.onopen = () => console.log('[map ws] open');
-
-    ws.onmessage = (e) => {
-        let msg;
-        try { msg = JSON.parse(e.data); } catch { return; }
-
-        if (msg.type !== 'players_snapshot') return;
-
-        const incoming = msg.players || [];
-
-        const cleaned = incoming
-            .map(p => ({ ...p, lat: Number(p.lat), lng: Number(p.lng) }))
-            .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
-
-        if (cleaned.length !== incoming.length) {
-                console.warn(
-                    '[ws] dropped players with invalid coords',
-                    incoming.filter(p => !Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lng)))
-            );
-            }
-
-        window._lastIncoming = cleaned;
-
-        console.log('[ws] players_snapshot count=', cleaned.length);
-        console.table(cleaned.map(p => ({ gamertag: p.gamertag, lat: p.lat, lng: p.lng })));
-        
-        window.livePlayers = cleaned.length
-        ? cleaned.map(p => ({ ...p, mapVisible: true }))
-        : null;
-
-        renderMapMarkers(window.currentPlayersForMap());
-        refreshEventMarkers?.();
-    };
-
-    ws.onerror = (e) => console.warn('[map ws] error', e);
-    ws.onclose = (e) => console.warn('[map ws] closed', e.code, e.reason);
 }
