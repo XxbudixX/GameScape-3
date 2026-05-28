@@ -1,11 +1,8 @@
 // map.js GameScape map page
 // Main map page with avatar markers, events and profile popups.
 
-const MAPTILER_KEY   = 'qXZMMqoofeJQqdk8nsv1';
+const MAPTILER_KEY   = window.MAPTILER_KEY || '';
 const MAPTILER_STYLE = `https://api.maptiler.com/maps/019d1f6a-0bb2-7db3-a9c7-670e85ac0f84/style.json?key=${MAPTILER_KEY}`;
-
-// Steam API key for game data
-const STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E';
 
 // Hardcoded demo players. Each has avatarSeed (DiceBear), location (for filter),
 // mapVisible flag, and isDemo (marks the logged-in user's stand-in marker).

@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, session, send_from_directory
+from flask import Flask, request, jsonify, session, send_from_directory, Response
 from databas import connect_db
 from werkzeug.security import check_password_hash, generate_password_hash
 import os
@@ -6,6 +6,7 @@ import urllib.request
 import urllib.parse
 import ipaddress
 import json
+import configparser
 import math
 import random
 import threading
@@ -24,6 +25,10 @@ except ImportError:
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
+config = configparser.ConfigParser()
+config.read(os.path.join(ROOT, 'config.ini'))
+
+
 app = Flask(__name__, static_folder=None)
 app.secret_key = "hemlig_nyckel"
 
@@ -34,7 +39,7 @@ if SOCK_AVAILABLE:
 connected_users = {}
 connected_map_clients = set()
 
-STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E'
+STEAM_API_KEY = config.get('api_keys', 'STEAM_API_KEY', fallback='')
 
 MAP_DEFAULT_LAT = 55.605
 MAP_DEFAULT_LNG = 13.008
@@ -147,6 +152,12 @@ def home():
 @app.route('/map')
 def map_page():
     return send_from_directory(os.path.join(ROOT, 'templates'), 'index.html')
+
+@app.route('/api/maptiler-config.js')
+def maptiler_config():
+    key = config.get('api_keys', 'MAPTILER_KEY', fallback='')
+    return Response('window.MAPTILER_KEY = ' + json.dumps(key) + ';', mimetype='application/javascript')
+
 
 @app.route('/chat')
 def chat_page():
