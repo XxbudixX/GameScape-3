@@ -1362,6 +1362,7 @@ function spreadOverlappingPlayers(players) {
     });
 }
 
+
 function initMapWebSocket() {
     console.log('[map.js] initMapWebSocket called', Date.now());
 
@@ -1377,26 +1378,32 @@ function initMapWebSocket() {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
 
-        if (msg.type === 'players_snapshot') {
-            const incoming = msg.players || [];
-            window._lastIncoming = incoming;
-            window._lastIncoming = incoming;
-console.log('[ws] players_snapshot count=', incoming.length);
-console.table(incoming.map(p => ({ gamertag: p.gamertag, lat: p.lat, lng: p.lng })));
-//console.log('[ws] players_snapshot', incoming.length, incoming);
-//console.table(incoming.map(p => ({ gamertag: p.gamertag, lat: p.lat, lng: p.lng })));
-            if (incoming.length > 0) {
-                window.livePlayers = spreadOverlappingPlayers(incoming).map(p => ({ ...p, mapVisible: true }));
+        if (msg.type !== 'players_snapshot') return;
 
+        const incoming = msg.players || [];
 
-                renderMapMarkers(window.currentPlayersForMap());
-                refreshEventMarkers?.();
-            } else {
-                window.livePlayers = null;
-                renderMapMarkers(window.currentPlayersForMap());
-                refreshEventMarkers?.();
+        const cleaned = incoming
+            .map(p => ({ ...p, lat: Number(p.lat), lng: Number(p.lng) }))
+            .filter(p => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+
+        if (cleaned.length !== incoming.length) {
+                console.warn(
+                    '[ws] dropped players with invalid coords',
+                    incoming.filter(p => !Number.isFinite(Number(p.lat)) || !Number.isFinite(Number(p.lng)))
+            );
             }
-        }
+
+        window._lastIncoming = cleaned;
+
+        console.log('[ws] players_snapshot count=', cleaned.length);
+        console.table(cleaned.map(p => ({ gamertag: p.gamertag, lat: p.lat, lng: p.lng })));
+        
+        window.livePlayers = cleaned.length
+        ? cleaned.map(p => ({ ...p, mapVisible: true }))
+        : null;
+
+        renderMapMarkers(window.currentPlayersForMap());
+        refreshEventMarkers?.();
     };
 
     ws.onerror = (e) => console.warn('[map ws] error', e);
