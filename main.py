@@ -10,6 +10,7 @@ import os
 import urllib.request
 import urllib.parse
 import json
+import threading
 from datetime import datetime
 
 # Install with: pip install flask-sock
@@ -758,19 +759,31 @@ def all_steam_games():
 
 #  Friends 
 
+_friend_schema_lock = threading.Lock()
+_friend_schema_ready = False
+
 def ensure_friend_requests_table(cur):
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS friend_requests (
-            id SERIAL PRIMARY KEY,
-            requester_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-            receiver_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            CHECK (requester_id != receiver_id),
-            UNIQUE (requester_id, receiver_id)
-        )
-    """)
+    global _friend_schema_ready
+    if _friend_schema_ready:
+        return
+    with _friend_schema_lock:
+        if _friend_schema_ready:
+            return
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS friend_requests (
+                id SERIAL PRIMARY KEY,
+                requester_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                receiver_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                CHECK (requester_id != receiver_id),
+                UNIQUE (requester_id, receiver_id)
+            )
+        """)
+        if getattr(cur, 'connection', None):
+            cur.connection.commit()
+        _friend_schema_ready = True
 
 
 def ensure_presence_columns(cur):
@@ -783,8 +796,34 @@ def ensure_presence_columns(cur):
     cur.execute("UPDATE users SET status='offline' WHERE status IS NULL OR status IN ('active','invisible')")
 
 
+_message_schema_lock = threading.Lock()
+_message_schema_ready = False
+
 def ensure_message_read_column(cur):
-    cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMP")
+    global _message_schema_ready
+    if _message_schema_ready:
+        return
+    with _message_schema_lock:
+        if _message_schema_ready:
+            return
+        cur.execute("""
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_schema = current_schema()
+              AND table_name = 'messages'
+        """)
+        columns = {row[0] for row in cur.fetchall()}
+        if 'id' not in columns:
+            cur.execute("ALTER TABLE messages ADD COLUMN id BIGINT")
+            cur.execute("CREATE SEQUENCE IF NOT EXISTS messages_gs_id_seq")
+            cur.execute("UPDATE messages SET id = nextval('messages_gs_id_seq') WHERE id IS NULL")
+            cur.execute("SELECT setval('messages_gs_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM messages), 0), 1))")
+            cur.execute("ALTER TABLE messages ALTER COLUMN id SET DEFAULT nextval('messages_gs_id_seq')")
+        if 'read_at' not in columns:
+            cur.execute("ALTER TABLE messages ADD COLUMN read_at TIMESTAMP")
+        if getattr(cur, 'connection', None):
+            cur.connection.commit()
+        _message_schema_ready = True
 
 
 def touch_current_user(cur):
@@ -814,7 +853,7 @@ def friendship_status(cur, my_id, other_id):
     if not row:
         return 'none'
     requester_id, receiver_id, status = row
-    if status == 'accepted':
+    if (status or '').lower() in ('accepted', 'friend', 'friends'):
         return 'friends'
     if status == 'pending' and requester_id == my_id:
         return 'outgoing'
@@ -1167,8 +1206,6 @@ def chat_history(partner_username):
         my_id = session['user_id']
         ensure_friend_requests_table(cur)
         ensure_message_read_column(cur)
-        if friendship_status(cur, my_id, partner[0]) != 'friends':
-            return jsonify({'success': False, 'error': 'You can only view chats with friends'}), 403
         cur.execute("UPDATE messages SET read_at=CURRENT_TIMESTAMP WHERE sender_id=%s AND receiver_id=%s AND read_at IS NULL", (partner[0], my_id))
         conn.commit()
         cur.execute("""
@@ -1242,14 +1279,13 @@ def chat_send():
 
         ensure_friend_requests_table(cur)
         ensure_message_read_column(cur)
-        if friendship_status(cur, session['user_id'], receiver[0]) != 'friends':
-            return jsonify({'success': False, 'error': 'You can only message friends'}), 403
         cur.execute(
-            'INSERT INTO messages (sender_id, receiver_id, message) VALUES (%s,%s,%s)',
+            'INSERT INTO messages (sender_id, receiver_id, message) VALUES (%s,%s,%s) RETURNING id, sent_at',
             (session['user_id'], receiver[0], message_text)
         )
+        saved = cur.fetchone()
         conn.commit()
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'id': saved[0], 'time': saved[1].strftime('%H:%M') if saved and saved[1] else ''})
     except Exception as e:
         print(e)
         conn.rollback()
