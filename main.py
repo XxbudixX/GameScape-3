@@ -821,6 +821,12 @@ def ensure_message_read_column(cur):
             cur.execute("ALTER TABLE messages ALTER COLUMN id SET DEFAULT nextval('messages_gs_id_seq')")
         if 'read_at' not in columns:
             cur.execute("ALTER TABLE messages ADD COLUMN read_at TIMESTAMP")
+        if 'edited_at' not in columns:
+            cur.execute("ALTER TABLE messages ADD COLUMN edited_at TIMESTAMP")
+        if 'deleted_at' not in columns:
+            cur.execute("ALTER TABLE messages ADD COLUMN deleted_at TIMESTAMP")
+        if 'reply_to_message_id' not in columns:
+            cur.execute("ALTER TABLE messages ADD COLUMN reply_to_message_id BIGINT")
         if getattr(cur, 'connection', None):
             cur.connection.commit()
         _message_schema_ready = True
@@ -1135,31 +1141,33 @@ def chat_contacts():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
-        # JOIN LATERAL runs the inner subquery once per row of the outer table (users).
-        # Here it fetches the single most-recent message between the current user and
-        # each other user. A plain JOIN + GROUP BY can't do this cleanly because we need
-        # the actual message text, not just an aggregated timestamp.
-        cur.execute("""
-            SELECT u.username, m.message, m.sent_at
-            FROM users u
-            JOIN LATERAL (
-                SELECT message, sent_at FROM messages
-                WHERE (sender_id = %s AND receiver_id = u.user_id)
-                   OR (sender_id = u.user_id AND receiver_id = %s)
-                ORDER BY sent_at DESC LIMIT 1
-            ) m ON true
-            WHERE u.user_id != %s
-            ORDER BY m.sent_at DESC
-        """, (session['user_id'], session['user_id'], session['user_id']))
-        contacts = [
-            {'username': r[0], 'last_message': r[1], 'last_time': r[2].strftime('%H:%M') if r[2] else ''}
-            for r in cur.fetchall()
-        ]
         ensure_friend_requests_table(cur)
         ensure_message_read_column(cur)
         touch_current_user(cur)
         conn.commit()
         my_id = session['user_id']
+        cur.execute("""
+            SELECT u.username, m.message, m.sent_at, COALESCE(u.avatar_seed, u.username)
+            FROM (
+                SELECT DISTINCT CASE WHEN sender_id=%s THEN receiver_id ELSE sender_id END AS other_id
+                FROM messages
+                WHERE sender_id=%s OR receiver_id=%s
+            ) c
+            JOIN users u ON u.user_id = c.other_id
+            JOIN LATERAL (
+                SELECT message, sent_at
+                FROM messages
+                WHERE (sender_id=%s AND receiver_id=u.user_id)
+                   OR (sender_id=u.user_id AND receiver_id=%s)
+                ORDER BY sent_at DESC, id DESC
+                LIMIT 1
+            ) m ON true
+            ORDER BY m.sent_at DESC
+        """, (my_id, my_id, my_id, my_id, my_id))
+        contacts = [
+            {'username': r[0], 'last_message': r[1], 'last_time': r[2].strftime('%H:%M') if r[2] else '', 'avatar_seed': r[3]}
+            for r in cur.fetchall()
+        ]
         contact_names = {c['username'] for c in contacts}
         cur.execute("""
             SELECT u.username,
@@ -1209,13 +1217,24 @@ def chat_history(partner_username):
         cur.execute("UPDATE messages SET read_at=CURRENT_TIMESTAMP WHERE sender_id=%s AND receiver_id=%s AND read_at IS NULL", (partner[0], my_id))
         conn.commit()
         cur.execute("""
-            SELECT u.username, m.message, m.sent_at
-            FROM messages m JOIN users u ON u.user_id = m.sender_id
+            SELECT m.id, u.username, m.message, m.sent_at, m.edited_at, m.deleted_at,
+                   m.reply_to_message_id, ru.username, rm.message, COALESCE(u.avatar_seed, u.username)
+            FROM messages m
+            JOIN users u ON u.user_id = m.sender_id
+            LEFT JOIN messages rm ON rm.id = m.reply_to_message_id
+            LEFT JOIN users ru ON ru.user_id = rm.sender_id
             WHERE (m.sender_id=%s AND m.receiver_id=%s) OR (m.sender_id=%s AND m.receiver_id=%s)
-            ORDER BY m.sent_at ASC
+            ORDER BY m.sent_at ASC, m.id ASC
         """, (my_id, partner[0], partner[0], my_id))
         messages = [
-            {'from': r[0], 'text': r[1], 'time': r[2].strftime('%H:%M') if r[2] else ''}
+            {
+                'id': r[0], 'from': r[1], 'text': '[deleted]' if r[5] else r[2],
+                'time': r[3].strftime('%H:%M') if r[3] else '',
+                'sent_at': r[3].isoformat() if r[3] else '',
+                'edited_at': r[4].isoformat() if r[4] else '',
+                'deleted': bool(r[5]), 'reply_to_id': r[6],
+                'reply_from': r[7], 'reply_text': r[8], 'avatar_seed': r[9]
+            }
             for r in cur.fetchall()
         ]
         return jsonify({'success': True, 'messages': messages})
@@ -1258,6 +1277,7 @@ def chat_send():
         return jsonify({'success': False, 'error': 'No data'}), 400
     to_username  = data.get('to', '').strip()
     message_text = data.get('message', '').strip()
+    reply_to_id = data.get('reply_to')
     if not to_username or not message_text:
         return jsonify({'success': False, 'error': 'Missing fields'}), 400
     conn, cur = connect_db()
@@ -1280,12 +1300,12 @@ def chat_send():
         ensure_friend_requests_table(cur)
         ensure_message_read_column(cur)
         cur.execute(
-            'INSERT INTO messages (sender_id, receiver_id, message) VALUES (%s,%s,%s) RETURNING id, sent_at',
-            (session['user_id'], receiver[0], message_text)
+            'INSERT INTO messages (sender_id, receiver_id, message, reply_to_message_id) VALUES (%s,%s,%s,%s) RETURNING id, sent_at',
+            (session['user_id'], receiver[0], message_text, reply_to_id)
         )
         saved = cur.fetchone()
         conn.commit()
-        return jsonify({'success': True, 'id': saved[0], 'time': saved[1].strftime('%H:%M') if saved and saved[1] else ''})
+        return jsonify({'success': True, 'id': saved[0], 'time': saved[1].strftime('%H:%M') if saved and saved[1] else '', 'sent_at': saved[1].isoformat() if saved and saved[1] else ''})
     except Exception as e:
         print(e)
         conn.rollback()
@@ -1293,6 +1313,60 @@ def chat_send():
     finally:
         cur.close(); conn.close()
 
+
+
+@app.route('/api/chat/message/<int:message_id>', methods=['PATCH'])
+def chat_edit_message(message_id):
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    data = request.get_json() or {}
+    text = data.get('message', '').strip()
+    if not text:
+        return jsonify({'success': False, 'error': 'Missing message'}), 400
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_message_read_column(cur)
+        cur.execute("""
+            UPDATE messages
+            SET message=%s, edited_at=CURRENT_TIMESTAMP
+            WHERE id=%s AND sender_id=%s AND deleted_at IS NULL
+            RETURNING edited_at
+        """, (text, message_id, session['user_id']))
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            return jsonify({'success': False, 'error': 'Message not found'}), 404
+        return jsonify({'success': True, 'edited_at': row[0].isoformat() if row[0] else ''})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/chat/message/<int:message_id>', methods=['DELETE'])
+def chat_delete_message(message_id):
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_message_read_column(cur)
+        cur.execute("""
+            UPDATE messages
+            SET message='', deleted_at=CURRENT_TIMESTAMP
+            WHERE id=%s AND sender_id=%s AND deleted_at IS NULL
+        """, (message_id, session['user_id']))
+        conn.commit()
+        return jsonify({'success': cur.rowcount > 0})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
 
 # The chat page search bar calls this to find users by username prefix.
 @app.route('/api/users/search', methods=['GET'])
@@ -1356,8 +1430,14 @@ if SOCK_AVAILABLE:
                     elif msg_type == 'stop_typing':
                         payload['type'] = 'stop_typing'
                     else:
-                        payload['type']    = 'message'
+                        payload['type']    = data.get('type', 'message')
                         payload['message'] = data.get('message', '')
+                        payload['id']      = data.get('id')
+                        payload['time']    = data.get('time', '')
+                        payload['sent_at'] = data.get('sent_at', '')
+                        payload['reply_to'] = data.get('reply_to')
+                        payload['reply_from'] = data.get('reply_from')
+                        payload['reply_text'] = data.get('reply_text')
                     try:
                         target_ws.send(json.dumps(payload))
                     except Exception:
