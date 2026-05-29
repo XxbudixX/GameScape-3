@@ -1,4 +1,6 @@
 from gevent import monkey
+import gevent
+
 monkey.patch_all()
 
 from flask import Flask, request, jsonify, session, send_from_directory
@@ -855,6 +857,8 @@ def update_presence():
             touch_current_user(cur)
 
         conn.commit()
+        broadcast_map_players()
+
         return jsonify({'success': True})
     except Exception as e:
         conn.rollback()
@@ -1340,7 +1344,7 @@ if SOCK_AVAILABLE:
 
 def fetch_players_for_map():
     conn, cur = connect_db()
-    if conn is None:
+    if conn is None or cur is None:
         return []
     try:
         cur.execute("""
@@ -1375,31 +1379,57 @@ def fetch_players_for_map():
         cur.close()
         conn.close()
 
+def broadcast_map_players():
+    if not SOCK_AVAILABLE:
+        return
+    payload = json.dumps({
+        'type': 'players_snapshot',
+        'players': fetch_players_for_map()
+    })
+    dead = []
+    for ws in list(connected_map_clients):
+        try:
+            ws.send(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        connected_map_clients.discard(ws)
+
+
 if SOCK_AVAILABLE:
     @sock.route('/ws/map')
     def ws_map(ws):
         connected_map_clients.add(ws)
-        print("[WS map] sending snapshot")
-        print("[WS map] client connected")
+
+        def sender():
+            while True:
+                try:
+                    ws.send(json.dumps({
+                        'type': 'players_snapshot',
+                        'players': fetch_players_for_map()
+                    }))
+                except Exception:
+                    break
+                gevent.sleep(5)
+
+        send_greenlet = gevent.spawn(sender)
+
         try:
-            ws.send(json.dumps({
-                'type': 'players_snapshot',
-                'players': fetch_players_for_map()
-            }))
-            print("[WS map] snapshot sent")
             while True:
                 raw = ws.receive()
                 if raw is None:
                     break
-        except Exception as e:
-            print("[WS map] error:", e)
+
         finally:
+            try:
+                send_greenlet.kill()
+            except Exception:
+                pass
             connected_map_clients.discard(ws)
-            print("[WS map] client disconnected")     
 
 def init_db_schema():
     conn, cur = connect_db()
-    if conn is None:
+    if conn is None or cur is None:
         print("[init_db_schema] DB connection error")
         return
     try:
