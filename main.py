@@ -75,33 +75,60 @@ def settings_page():
 
 @app.route('/api/me', methods=['GET'])
 def me():
-    if 'user_id' in session:
-        avatar_seed = session.get('avatar_seed') or session['username']
-        # Refresh avatar_seed from the database on every session check so a page
-        # reload never falls back to an older username-based DiceBear seed.
-        conn, cur = connect_db()
-        if conn is not None:
-            try:
-                cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
-                conn.commit()
-                cur.execute('SELECT avatar_seed FROM users WHERE user_id = %s', (session['user_id'],))
-                row = cur.fetchone()
-                if row and row[0]:
-                    avatar_seed = row[0]
-                    session['avatar_seed'] = avatar_seed
-            except Exception as e:
-                print(e)
-            finally:
-                cur.close(); conn.close()
+    if 'user_id' not in session:
+        return jsonify({'logged_in': False, 'role': False})
+
+    avatar_seed = session.get('avatar_seed') or session.get('username') or 'GameScape'
+
+    conn, cur = connect_db()
+    if conn is None or cur is None:
+        # DB nere/timeout -> låt sidan ändå funka med session-värden
         return jsonify({
             'logged_in':   True,
-            'user_id':     session['user_id'],
-            'username':    session['username'],
+            'user_id':     session.get('user_id'),
+            'username':    session.get('username'),
             'role':        session.get('role', False),
             'avatar_seed': avatar_seed
         })
-    return jsonify({'logged_in': False, 'role': False})
 
+    try:
+        try:
+            cur.execute('SELECT avatar_seed FROM users WHERE user_id = %s', (session['user_id'],))
+        except Exception as e:
+            # Om kolumnen saknas (eller gammal schema), skapa den och försök igen
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+            conn.commit()
+            cur.execute('SELECT avatar_seed FROM users WHERE user_id = %s', (session['user_id'],))
+
+        row = cur.fetchone()
+        if row and row[0]:
+            avatar_seed = row[0]
+            session['avatar_seed'] = avatar_seed
+
+    except Exception as e:
+        print("[/api/me] error:", e)
+
+    finally:
+        try:
+            cur.close()
+        except Exception:
+            pass
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+    return jsonify({
+        'logged_in':   True,
+        'user_id':     session['user_id'],
+        'username':    session['username'],
+        'role':        session.get('role', False),
+        'avatar_seed': avatar_seed
+    })
 
 @app.route('/api/login', methods=['POST'])
 def login():
@@ -1328,14 +1355,8 @@ def fetch_players_for_map():
         players = []
         for r in rows:
             uid = r[0]
-            cur.execute("""
-                SELECT sg.appid, sg.name, sg.icon_url
-                FROM steam_games sg
-                JOIN user_steam_games usg ON sg.appid = usg.appid
-                WHERE usg.user_id = %s
-                LIMIT 6
-            """, (uid,))
-            games = [{'appid': g[0], 'name': g[1], 'icon_url': g[2]} for g in cur.fetchall()]
+            
+            games = []
             players.append({
                 'id': uid,
                 'gamertag': r[1],
@@ -1376,8 +1397,24 @@ if SOCK_AVAILABLE:
             connected_map_clients.discard(ws)
             print("[WS map] client disconnected")     
 
+def init_db_schema():
+    conn, cur = connect_db()
+    if conn is None:
+        print("[init_db_schema] DB connection error")
+        return
+    try:
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+        conn.commit()
+        print("[init_db_schema] OK")
+    except Exception as e:
+        conn.rollback()
+        print("[init_db_schema] ERROR:", e)
+    finally:
+        cur.close(); conn.close()
 
 if __name__ == "__main__":
+    init_db_schema()
+
     if SOCK_AVAILABLE:
         from gevent.pywsgi import WSGIServer
         print("[server] gevent on http://127.0.0.1:5000")
