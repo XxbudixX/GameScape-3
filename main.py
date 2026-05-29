@@ -10,6 +10,7 @@ import configparser
 import math
 import random
 import threading
+import uuid
 from datetime import datetime
 
 # Install with: pip install flask-sock
@@ -254,6 +255,8 @@ def login():
         # never None, which avoids subtle bugs in the is_admin() check below.
         session['role']     = bool(user[3]) if user[3] is not None else False
         session['avatar_seed'] = user[4] or user[1]
+        # Fresh login => fresh map login key.
+        session['map_login_key'] = uuid.uuid4().hex
         return jsonify({'success': True, 'username': user[1], 'avatar_seed': session['avatar_seed']})
     except Exception as e:
         print(e)
@@ -326,6 +329,8 @@ def register():
         session['username'] = username
         session['role']     = False
         session['avatar_seed'] = username
+        # A fresh registration is also a fresh login 
+        session['map_login_key'] = uuid.uuid4().hex
         return jsonify({'success': True, 'username': username, 'avatar_seed': session['avatar_seed']})
     except Exception as e:
         print(e)
@@ -863,6 +868,8 @@ def ensure_presence_columns(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT FALSE")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_invisible BOOLEAN DEFAULT FALSE")
+    # Records which login session produced the saved map position
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS map_login_key TEXT")
     cur.execute("UPDATE users SET is_invisible=TRUE WHERE status='invisible'")
     cur.execute("UPDATE users SET status='offline' WHERE status IS NULL OR status IN ('active','invisible')")
 
@@ -989,16 +996,43 @@ def update_map_presence():
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
         ensure_presence_columns(cur)
-        if 'map_lat' not in session or 'map_lng' not in session:
-            session['map_lat'], session['map_lng'] = randomize_location(*location_from_ip())
-        lat, lng = session['map_lat'], session['map_lng']
-        cur.execute("""
-            UPDATE users
-            SET latitude=%s, longitude=%s,
-                is_online=CASE WHEN COALESCE(is_invisible,FALSE) THEN FALSE ELSE TRUE END,
-                last_active=CURRENT_TIMESTAMP
-            WHERE user_id=%s
-        """, (lat, lng, session['user_id']))
+
+        # One randomized position per login. 
+        server_key = session.get('map_login_key')
+        if not server_key:
+            # No key on the session yet 
+            server_key = session['map_login_key'] = uuid.uuid4().hex
+
+        cur.execute(
+            'SELECT latitude, longitude, map_login_key FROM users WHERE user_id=%s',
+            (session['user_id'],)
+        )
+        existing_lat, existing_lng, existing_key = (cur.fetchone() or (None, None, None))
+
+        if existing_key == server_key and existing_lat is not None and existing_lng is not None:
+            # Same login as the saved position
+            cur.execute("""
+                UPDATE users
+                SET is_online=CASE WHEN COALESCE(is_invisible,FALSE) THEN FALSE ELSE TRUE END,
+                    last_active=CURRENT_TIMESTAMP
+                WHERE user_id=%s
+            """, (session['user_id'],))
+            lat, lng = float(existing_lat), float(existing_lng)
+        else:
+            # New login (or first position ever for this user).
+            try:
+                base_lat, base_lng = location_from_ip()
+            except Exception as e:
+                return jsonify({'success': False, 'error': f'Could not determine location: {e}'}), 502
+            lat, lng = randomize_location(base_lat, base_lng)
+            cur.execute("""
+                UPDATE users
+                SET latitude=%s, longitude=%s, map_login_key=%s,
+                    is_online=CASE WHEN COALESCE(is_invisible,FALSE) THEN FALSE ELSE TRUE END,
+                    last_active=CURRENT_TIMESTAMP
+                WHERE user_id=%s
+            """, (lat, lng, server_key, session['user_id']))
+
         conn.commit()
         broadcast_map_snapshot()
         return jsonify({'success': True, 'lat': lat, 'lng': lng})
