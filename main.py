@@ -3,13 +3,19 @@ import gevent
 
 monkey.patch_all()
 
-from flask import Flask, request, jsonify, session, send_from_directory
+from flask import Flask, request, jsonify, session, send_from_directory, Response
 from databas import connect_db
 from werkzeug.security import check_password_hash, generate_password_hash
 import os
 import urllib.request
 import urllib.parse
+import ipaddress
 import json
+import configparser
+import math
+import random
+import uuid
+import socket
 from datetime import datetime
 
 # Install with: pip install flask-sock
@@ -26,6 +32,9 @@ print("SOCK_AVAILABLE =", SOCK_AVAILABLE)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
+config = configparser.ConfigParser()
+config.read(os.path.join(ROOT, 'config.ini'))
+
 app = Flask(__name__, static_folder=None)
 app.secret_key = "hemlig_nyckel"
 
@@ -36,7 +45,47 @@ if SOCK_AVAILABLE:
 connected_users = {}
 connected_map_clients = set()
 
-STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E'
+STEAM_API_KEY = config.get('api_keys', 'STEAM_API_KEY', fallback='')
+
+MAP_DEFAULT_LAT = 55.605
+MAP_DEFAULT_LNG = 13.008
+
+# nudge a position a bit so people aren't stacked on the exact same dot
+def randomize_location(lat, lng, radius_m=500):
+    distance = radius_m * math.sqrt(random.random())
+    angle = random.random() * math.tau
+    lat += (distance * math.cos(angle)) / 111320
+    lng += (distance * math.sin(angle)) / (111320 * math.cos(math.radians(lat)))
+    return lat, lng
+
+
+def get_client_ip():
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
+    try:
+        if ipaddress.ip_address(ip).is_private:
+            return ''
+    except ValueError:
+        return ''
+    return ip
+
+
+def location_from_ip():
+    ip = get_client_ip()
+    url = f'http://ip-api.com/json/{ip}?fields=status,message,lat,lon' if ip else 'http://ip-api.com/json/?fields=status,message,lat,lon'
+    with urllib.request.urlopen(url, timeout=3) as res:
+        data = json.loads(res.read().decode('utf-8'))
+    if data.get('status') != 'success':
+        raise ValueError(data.get('message') or 'Could not locate IP')
+    return float(data['lat']), float(data['lon'])
+
+
+# always returns a usable spot: IP if we can, otherwise the map default
+def base_location():
+    try:
+        return location_from_ip()
+    except Exception as e:
+        print('[presence] IP lookup failed, using default location:', e)
+        return MAP_DEFAULT_LAT, MAP_DEFAULT_LNG
 
 #  Page routes 
 
@@ -47,6 +96,11 @@ def home():
 @app.route('/map')
 def map_page():
     return send_from_directory(os.path.join(ROOT, 'templates'), 'index.html')
+
+@app.route('/api/maptiler-config.js')
+def maptiler_config():
+    key = config.get('api_keys', 'MAPTILER_KEY', fallback='')
+    return Response('window.MAPTILER_KEY = ' + json.dumps(key) + ';', mimetype='application/javascript')
 
 @app.route('/chat')
 def chat_page():
@@ -170,6 +224,8 @@ def login():
         # never None, which avoids subtle bugs in the is_admin() check below.
         session['role']     = bool(user[3]) if user[3] is not None else False
         session['avatar_seed'] = user[4] or user[1]
+        # fresh login -> fresh map spot
+        session['map_login_key'] = uuid.uuid4().hex
         return jsonify({'success': True, 'username': user[1], 'avatar_seed': session['avatar_seed']})
     except Exception as e:
         print(e)
@@ -242,6 +298,8 @@ def register():
         session['username'] = username
         session['role']     = False
         session['avatar_seed'] = username
+        # fresh login -> fresh map spot
+        session['map_login_key'] = uuid.uuid4().hex
         return jsonify({'success': True, 'username': username, 'avatar_seed': session['avatar_seed']})
     except Exception as e:
         print(e)
@@ -340,6 +398,7 @@ def get_players():
             })
             players[-1].update({
                 'age': calculate_age(meta[0]) or '—',
+                'rank': 'Unranked',
                 'friendship_status': friendship_status(cur, session['user_id'], uid) if 'user_id' in session and not is_self else 'self',
                 'is_self': is_self,
             })
@@ -779,12 +838,31 @@ def ensure_presence_columns(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT FALSE")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_invisible BOOLEAN DEFAULT FALSE")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS map_login_key TEXT")
     cur.execute("UPDATE users SET is_invisible=TRUE WHERE status='invisible'")
     cur.execute("UPDATE users SET status='offline' WHERE status IS NULL OR status IN ('active','invisible')")
 
 
 def ensure_message_read_column(cur):
-    cur.execute("ALTER TABLE messages ADD COLUMN IF NOT EXISTS read_at TIMESTAMP")
+    cur.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = 'messages'
+    """)
+    columns = {row[0] for row in cur.fetchall()}
+    if 'id' not in columns:
+        cur.execute("ALTER TABLE messages ADD COLUMN id BIGINT")
+        cur.execute("CREATE SEQUENCE IF NOT EXISTS messages_gs_id_seq")
+        cur.execute("UPDATE messages SET id = nextval('messages_gs_id_seq') WHERE id IS NULL")
+        cur.execute("SELECT setval('messages_gs_id_seq', GREATEST(COALESCE((SELECT MAX(id) FROM messages), 0), 1))")
+        cur.execute("ALTER TABLE messages ALTER COLUMN id SET DEFAULT nextval('messages_gs_id_seq')")
+    if 'read_at' not in columns:
+        cur.execute("ALTER TABLE messages ADD COLUMN read_at TIMESTAMP")
+    if 'edited_at' not in columns:
+        cur.execute("ALTER TABLE messages ADD COLUMN edited_at TIMESTAMP")
+    if 'deleted_at' not in columns:
+        cur.execute("ALTER TABLE messages ADD COLUMN deleted_at TIMESTAMP")
+    if 'reply_to_message_id' not in columns:
+        cur.execute("ALTER TABLE messages ADD COLUMN reply_to_message_id BIGINT")
 
 
 def touch_current_user(cur):
@@ -860,6 +938,55 @@ def update_presence():
         broadcast_map_players()
 
         return jsonify({'success': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+# server picks the IP location and keeps one randomized spot per login
+@app.route('/api/map/presence', methods=['POST'])
+def update_map_presence():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_presence_columns(cur)
+        server_key = session.get('map_login_key')
+        if not server_key:
+            server_key = session['map_login_key'] = uuid.uuid4().hex
+
+        # bump liveness first so "online" never depends on the IP lookup working
+        cur.execute("""
+            UPDATE users
+            SET is_online=CASE WHEN COALESCE(is_invisible,FALSE) THEN FALSE ELSE TRUE END,
+                last_active=CURRENT_TIMESTAMP
+            WHERE user_id=%s
+        """, (session['user_id'],))
+
+        cur.execute(
+            'SELECT latitude, longitude, map_login_key FROM users WHERE user_id=%s',
+            (session['user_id'],)
+        )
+        existing_lat, existing_lng, existing_key = (cur.fetchone() or (None, None, None))
+
+        if existing_key == server_key and existing_lat is not None and existing_lng is not None:
+            # same login, keep the position we already picked
+            lat, lng = float(existing_lat), float(existing_lng)
+        else:
+            # new login (or first time) -> place from IP, falling back to default
+            base_lat, base_lng = base_location()
+            lat, lng = randomize_location(base_lat, base_lng)
+            cur.execute("""
+                UPDATE users SET latitude=%s, longitude=%s, map_login_key=%s WHERE user_id=%s
+            """, (lat, lng, server_key, session['user_id']))
+
+        conn.commit()
+        broadcast_map_players()
+        return jsonify({'success': True, 'lat': lat, 'lng': lng})
     except Exception as e:
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1097,11 +1224,8 @@ def chat_contacts():
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
         # JOIN LATERAL runs the inner subquery once per row of the outer table (users).
-        # Here it fetches the single most-recent message between the current user and
-        # each other user. A plain JOIN + GROUP BY can't do this cleanly because we need
-        # the actual message text, not just an aggregated timestamp.
         cur.execute("""
-            SELECT u.username, m.message, m.sent_at
+            SELECT u.username, m.message, m.sent_at, COALESCE(u.avatar_seed, u.username)
             FROM users u
             JOIN LATERAL (
                 SELECT message, sent_at FROM messages
@@ -1113,7 +1237,7 @@ def chat_contacts():
             ORDER BY m.sent_at DESC
         """, (session['user_id'], session['user_id'], session['user_id']))
         contacts = [
-            {'username': r[0], 'last_message': r[1], 'last_time': r[2].strftime('%H:%M') if r[2] else ''}
+            {'username': r[0], 'last_message': r[1], 'last_time': r[2].strftime('%H:%M') if r[2] else '', 'avatar_seed': r[3]}
             for r in cur.fetchall()
         ]
         ensure_friend_requests_table(cur)
@@ -1172,13 +1296,24 @@ def chat_history(partner_username):
         cur.execute("UPDATE messages SET read_at=CURRENT_TIMESTAMP WHERE sender_id=%s AND receiver_id=%s AND read_at IS NULL", (partner[0], my_id))
         conn.commit()
         cur.execute("""
-            SELECT u.username, m.message, m.sent_at
-            FROM messages m JOIN users u ON u.user_id = m.sender_id
+            SELECT m.id, u.username, m.message, m.sent_at, m.edited_at, m.deleted_at,
+                   m.reply_to_message_id, ru.username, rm.message, COALESCE(u.avatar_seed, u.username)
+            FROM messages m
+            JOIN users u ON u.user_id = m.sender_id
+            LEFT JOIN messages rm ON rm.id = m.reply_to_message_id
+            LEFT JOIN users ru ON ru.user_id = rm.sender_id
             WHERE (m.sender_id=%s AND m.receiver_id=%s) OR (m.sender_id=%s AND m.receiver_id=%s)
-            ORDER BY m.sent_at ASC
+            ORDER BY m.sent_at ASC, m.id ASC
         """, (my_id, partner[0], partner[0], my_id))
         messages = [
-            {'from': r[0], 'text': r[1], 'time': r[2].strftime('%H:%M') if r[2] else ''}
+            {
+                'id': r[0], 'from': r[1], 'text': '[deleted]' if r[5] else r[2],
+                'time': r[3].strftime('%H:%M') if r[3] else '',
+                'sent_at': r[3].isoformat() if r[3] else '',
+                'edited_at': r[4].isoformat() if r[4] else '',
+                'deleted': bool(r[5]), 'reply_to_id': r[6],
+                'reply_from': r[7], 'reply_text': r[8], 'avatar_seed': r[9]
+            }
             for r in cur.fetchall()
         ]
         return jsonify({'success': True, 'messages': messages})
@@ -1221,6 +1356,7 @@ def chat_send():
         return jsonify({'success': False, 'error': 'No data'}), 400
     to_username  = data.get('to', '').strip()
     message_text = data.get('message', '').strip()
+    reply_to_id = data.get('reply_to')
     if not to_username or not message_text:
         return jsonify({'success': False, 'error': 'Missing fields'}), 400
     conn, cur = connect_db()
@@ -1238,20 +1374,74 @@ def chat_send():
         perm     = perm_row[0] if perm_row else 'everyone'
         if perm == 'nobody':
             return jsonify({'success': False, 'error': 'This user is not accepting messages'}), 403
-        # 'friends' enforcement goes here once a friends table exists
 
         ensure_friend_requests_table(cur)
         ensure_message_read_column(cur)
         if friendship_status(cur, session['user_id'], receiver[0]) != 'friends':
             return jsonify({'success': False, 'error': 'You can only message friends'}), 403
         cur.execute(
-            'INSERT INTO messages (sender_id, receiver_id, message) VALUES (%s,%s,%s)',
-            (session['user_id'], receiver[0], message_text)
+            'INSERT INTO messages (sender_id, receiver_id, message, reply_to_message_id) VALUES (%s,%s,%s,%s) RETURNING id, sent_at',
+            (session['user_id'], receiver[0], message_text, reply_to_id)
         )
+        saved = cur.fetchone()
         conn.commit()
-        return jsonify({'success': True})
+        return jsonify({'success': True, 'id': saved[0], 'time': saved[1].strftime('%H:%M') if saved and saved[1] else '', 'sent_at': saved[1].isoformat() if saved and saved[1] else ''})
     except Exception as e:
         print(e)
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/chat/message/<int:message_id>', methods=['PATCH'])
+def chat_edit_message(message_id):
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    data = request.get_json() or {}
+    text = data.get('message', '').strip()
+    if not text:
+        return jsonify({'success': False, 'error': 'Missing message'}), 400
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_message_read_column(cur)
+        cur.execute("""
+            UPDATE messages
+            SET message=%s, edited_at=CURRENT_TIMESTAMP
+            WHERE id=%s AND sender_id=%s AND deleted_at IS NULL
+            RETURNING edited_at
+        """, (text, message_id, session['user_id']))
+        row = cur.fetchone()
+        conn.commit()
+        if not row:
+            return jsonify({'success': False, 'error': 'Message not found'}), 404
+        return jsonify({'success': True, 'edited_at': row[0].isoformat() if row[0] else ''})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/chat/message/<int:message_id>', methods=['DELETE'])
+def chat_delete_message(message_id):
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_message_read_column(cur)
+        cur.execute("""
+            UPDATE messages
+            SET message='', deleted_at=CURRENT_TIMESTAMP
+            WHERE id=%s AND sender_id=%s AND deleted_at IS NULL
+        """, (message_id, session['user_id']))
+        conn.commit()
+        return jsonify({'success': cur.rowcount > 0})
+    except Exception as e:
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
@@ -1271,10 +1461,10 @@ def search_users():
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
         cur.execute(
-            "SELECT username FROM users WHERE username ILIKE %s AND user_id != %s LIMIT 10",
+            "SELECT username, COALESCE(avatar_seed, username) FROM users WHERE username ILIKE %s AND user_id != %s LIMIT 10",
             (f'%{q}%', session['user_id'])
         )
-        users = [{'username': r[0]} for r in cur.fetchall()]
+        users = [{'username': r[0], 'avatar_seed': r[1]} for r in cur.fetchall()]
         ensure_friend_requests_table(cur)
         conn.commit()
         for u in users:
@@ -1320,8 +1510,14 @@ if SOCK_AVAILABLE:
                     elif msg_type == 'stop_typing':
                         payload['type'] = 'stop_typing'
                     else:
-                        payload['type']    = 'message'
+                        payload['type']    = data.get('type', 'message')
                         payload['message'] = data.get('message', '')
+                        payload['id']      = data.get('id')
+                        payload['time']    = data.get('time', '')
+                        payload['sent_at'] = data.get('sent_at', '')
+                        payload['reply_to'] = data.get('reply_to')
+                        payload['reply_from'] = data.get('reply_from')
+                        payload['reply_text'] = data.get('reply_text')
                     try:
                         target_ws.send(json.dumps(payload))
                     except Exception:
@@ -1348,7 +1544,17 @@ def fetch_players_for_map():
         return []
     try:
         cur.execute("""
-            SELECT user_id, username, status, latitude, longitude, last_active, COALESCE(avatar_seed, username)
+            SELECT user_id, username, latitude, longitude, last_active, COALESCE(avatar_seed, username), birthday,
+                   CASE
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '30 seconds') THEN 'active'
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '10 minutes') THEN 'recent'
+                       ELSE 'offline'
+                   END AS live_status,
+                   CASE
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '30 seconds') THEN 'Just now'
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '10 minutes') THEN 'Recently'
+                       ELSE COALESCE(last_active::text, 'Unknown')
+                   END AS last_active_label
             FROM users
             WHERE latitude IS NOT NULL AND longitude IS NOT NULL
             AND COALESCE(is_invisible, FALSE) = FALSE
@@ -1364,11 +1570,13 @@ def fetch_players_for_map():
             players.append({
                 'id': uid,
                 'gamertag': r[1],
-                'status': r[2] or 'offline',
-                'lat': float(r[3]),
-                'lng': float(r[4]),
-                'lastActive': str(r[5]) if r[5] else 'Unknown',
-                'avatarSeed': r[6],
+                'status': r[7] or 'offline',
+                'lat': float(r[2]),
+                'lng': float(r[3]),
+                'lastActive': r[8] or 'Unknown',
+                'avatarSeed': r[5],
+                'age': calculate_age(r[6]) or '—',
+                'rank': 'Unranked',
                 'games': games,
             })
         return players
@@ -1427,6 +1635,26 @@ if SOCK_AVAILABLE:
                 pass
             connected_map_clients.discard(ws)
 
+
+
+def get_local_ipv4():
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except Exception:
+        try:
+            return socket.gethostbyname(socket.gethostname())
+        except Exception:
+            return "127.0.0.1"
+
+
+def print_server_links(port=5000):
+    local_ip = get_local_ipv4()
+    print(f"[server] Local:   http://127.0.0.1:{port}")
+    print(f"[server] IPv4:    http://{local_ip}:{port}")
+    print(f"[server] Network: http://0.0.0.0:{port}")
+
 def init_db_schema():
     conn, cur = connect_db()
     if conn is None or cur is None:
@@ -1444,10 +1672,10 @@ def init_db_schema():
 
 if __name__ == "__main__":
     init_db_schema()
+    print_server_links(5000)
 
     if SOCK_AVAILABLE:
         from gevent.pywsgi import WSGIServer
-        print("[server] gevent on http://127.0.0.1:5000")
-        WSGIServer(("127.0.0.1", 5000), app).serve_forever()
+        WSGIServer(("0.0.0.0", 5000), app).serve_forever()
     else:
-        app.run(host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+        app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
