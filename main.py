@@ -700,6 +700,39 @@ def account_update():
         except: pass
 
 
+@app.route('/api/events/active', methods=['GET'])
+def events_active():
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'events': []}), 500
+    try:
+        # Enkelt: hämta alla events (du kan filtrera på tid senare)
+        cur.execute("""
+            SELECT e.event_id, e.creator_id, e.title, e.datetime, e.appid,
+                   COALESCE(sg.name, '') AS game_name
+            FROM event e
+            LEFT JOIN steam_games sg ON sg.appid = e.appid
+            ORDER BY e.datetime DESC
+            LIMIT 200
+        """)
+        rows = cur.fetchall()
+        events = [{
+            'id': r[0],
+            'creator_id': r[1],
+            'title': r[2],
+            'datetime': r[3].isoformat() if r[3] else None,
+            'appid': r[4],
+            'game_name': r[5] or ''
+        } for r in rows]
+        return jsonify({'success': True, 'events': events})
+    except Exception as e:
+        return jsonify({'success': False, 'events': [], 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+
+
 #  Admin
 
 @app.route('/api/admin/delete_event/<int:event_id>', methods=['DELETE'])
