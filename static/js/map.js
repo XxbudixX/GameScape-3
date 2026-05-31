@@ -158,15 +158,18 @@ async function checkSession() {
 async function sendMapPresence() {
     if (!isLoggedIn) return;
     try {
-        const res = await fetch('/api/map/presence', { method: 'POST', credentials: 'same-origin' });
+        const res  = await fetch('/api/map/presence', { method: 'POST', credentials: 'same-origin' });
         const data = await res.json().catch(() => ({}));
-        const demo = PLAYERS.find(p => p.isDemo);
-        if (data.success && demo && data.lat != null && data.lng != null) {
-            demo.lat = Number(data.lat);
-            demo.lng = Number(data.lng);
-            renderMapMarkers(getVisiblePlayers());
-        } else if (data.error) console.warn('Map presence failed:', data.error);
-    } catch (e) { console.warn('Map presence failed:', e); }
+
+        if (!data.success && data.error) {
+            console.warn('Map presence failed:', data.error);
+        }
+
+        // Viktigt: uppdatera listan så du (och andra) dyker upp på kartan
+        await loadLivePlayers();
+    } catch (e) {
+        console.warn('Map presence failed:', e);
+    }
 }
 /*
 // Keeps the map updated when other users move or come online.
@@ -224,7 +227,20 @@ async function loadLivePlayers() {
 
         window.livePlayers = spreadOverlappingPlayers(cleaned);
         updateLocationCounts();
+
         renderMapMarkers(window.currentPlayersForMap());
+        const someone = window.currentPlayersForMap()[0];
+        if (someone && !activeEvents.some(e => e.playerId === someone.id)) {
+            activeEvents.push({
+                playerId: someone.id,
+                eventName: 'TEST',
+                gameName: 'TEST',
+                startHour: 8,
+                startMin: 0,
+                startAmPm: 'PM',
+                hasEnd: false
+            });
+        }
         refreshEventMarkers?.();
     } catch (e) {
         console.warn('Failed to load live players:', e);
@@ -742,7 +758,9 @@ function applyFilters() {
     let filtered = getVisiblePlayers();
 
     if (gameFilter !== 'all')
-        filtered = filtered.filter(p => p.games.some(g => g.toLowerCase() === gameFilter.toLowerCase()));
+        filtered = filtered.filter(p =>
+            (p.games || []).some(g => (typeof g === 'string' ? g : (g?.name || '')).toLowerCase() === gameFilter.toLowerCase())
+        );
 
     if (ageFilter === '18-25')       filtered = filtered.filter(p => p.age >= 18 && p.age <= 25);
     else if (ageFilter === '26-35')  filtered = filtered.filter(p => p.age >= 26 && p.age <= 35);
@@ -1167,9 +1185,8 @@ function initEventSystem() {
         }
 
         errEl.style.display = 'none';
-
-        const demo       = PLAYERS.find(p => p.isDemo);
-        const demoId     = demo ? demo.id : 99;
+        const me = window.currentPlayersForMap().find(p => p.is_self);
+        const demoId = me ? me.id : 99;
         activeEvents     = activeEvents.filter(e => e.playerId !== demoId);
         activeEvents.push({ playerId: demoId, eventName: name, gameName: game,
             startHour: startH, startMin: startM, startAmPm: startAp,
