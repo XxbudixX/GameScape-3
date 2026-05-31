@@ -1,65 +1,14 @@
 // map.js GameScape map page
-// MERGED: old version used as primary base (avatar markers, events system,
-// mini-profile popup, custom selects, demo visibility).
-// URL paths updated from old flat-file scheme to new Flask route scheme.
-console.log('[map.js] loaded', Date.now());
-const MAPTILER_KEY   = 'qXZMMqoofeJQqdk8nsv1';
+const MAPTILER_KEY   = window.MAPTILER_KEY || '';
 const MAPTILER_STYLE = `https://api.maptiler.com/maps/019d1f6a-0bb2-7db3-a9c7-670e85ac0f84/style.json?key=${MAPTILER_KEY}`;
-
-// Steam API key (kept from new project for future live player data integration)
-const STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E';
 
 const PLAYERS = [];
 
-// Hardcoded demo players. Each has avatarSeed (DiceBear), location (for filter),
-// mapVisible flag, and isDemo (marks the logged-in user's stand-in marker).
-/*
-const PLAYERS = [
-    { id: -1,  gamertag: 'NightOwl_SE',   games: ['Valorant', 'CS2'],            rank: 'Diamond',    status: 'active',  lng: 13.002, lat: 55.607, lastActive: 'Just now',   age: 24, location: 'malmo',     avatarSeed: 'nightowl',    mapVisible: true },
-    { id: -2,  gamertag: 'ProPlayer_99',  games: ['Minecraft', 'Fortnite'],       rank: 'Gold',       status: 'recent',  lng: 13.018, lat: 55.612, lastActive: '12 min ago',  age: 19, location: 'malmo',     avatarSeed: 'proplayer',   mapVisible: true },
-    { id: -3,  gamertag: 'ZeroGrav',      games: ['League of Legends'],           rank: 'Platinum',   status: 'active',  lng: 12.995, lat: 55.598, lastActive: 'Just now',   age: 28, location: 'goteborg',  avatarSeed: 'zerograv',    mapVisible: true },
-    { id: -4,  gamertag: 'StealthMode_K', games: ['Valorant', 'Apex Legends'],    rank: 'Challenger', status: 'active',  lng: 13.010, lat: 55.615, lastActive: 'Just now',   age: 22, location: 'stockholm', avatarSeed: 'stealth',     mapVisible: true },
-    { id: -5,  gamertag: 'CasualGamer88', games: ['Minecraft'],                   rank: 'Unranked',   status: 'recent',  lng: 13.025, lat: 55.595, lastActive: '1 hour ago', age: 31, location: 'goteborg',  avatarSeed: 'casualgamer', mapVisible: true },
-    { id: -6,  gamertag: 'SniperWolf',    games: ['CS2', 'Valorant'],             rank: 'Master',     status: 'active',  lng: 13.005, lat: 55.600, lastActive: 'Just now',   age: 26, location: 'malmo',     avatarSeed: 'sniperwolf',  mapVisible: true },
-    { id: -7,  gamertag: 'NoobMaster69',  games: ['Fortnite'],                    rank: 'Silver',     status: 'offline', lng: 13.015, lat: 55.620, lastActive: '2 days ago', age: 17, location: 'stockholm', avatarSeed: 'noobmaster',  mapVisible: true },
-    // Demo player represents the logged-in user on the map
-    { id: -99, gamertag: 'Demo',          games: ['Valorant', 'CS2', 'Fortnite'], rank: 'Gold',       status: 'active',  lng: 13.008, lat: 55.603, lastActive: 'Just now',   age: 22, location: 'malmo',     avatarSeed: 'GameScape',   mapVisible: true, isDemo: true },
-];*/
-
-
-
-//  Demo visibility (eye icon in profile page) 
-// Persisted in localStorage so the preference survives page refresh.
-//const DEMO_VISIBLE_KEY = 'gamescape_demo_visible';
-/*
-function getDemoVisible() {
-    const v = localStorage.getItem(DEMO_VISIBLE_KEY);
-    return v === null ? true : v === 'true';
-}
-*/
 window.livePlayers = [];
 window.currentPlayersForMap = function () {
     return window.livePlayers;
 
 };
-
-
-
-/*
-// Called by profile.js (inside iframe) via window.setDemoVisible().
-function setDemoVisible(val) {
-    localStorage.setItem(DEMO_VISIBLE_KEY, String(val));
-    const demo = PLAYERS.find(p => p.isDemo);
-    if (demo) demo.mapVisible = val;
-
-    renderMapMarkers(window.currentPlayersForMap());
-    refreshEventMarkers();
-}*/
-// Apply persisted visibility on load
-//PLAYERS.find(p => p.isDemo).mapVisible = getDemoVisible();
-
-// Expose so profile iframe can call it
-// window.setDemoVisible = setDemoVisible;
 
 
 function getVisiblePlayers() {
@@ -151,6 +100,8 @@ function setLoggedIn(status, username, avatarSeed) {
         renderMapMarkers(window.currentPlayersForMap());
         sendMapPresence();
     }*/
+
+    if (status && username) sendMapPresence();
 }
 
 // Checks the server session on page load so a refreshed page stays logged in.
@@ -168,12 +119,10 @@ async function checkSession() {
 function sendMapPresence() {
     if (!isLoggedIn) return;
 
-    // Skicka INGEN lat/lng -> backend touchar bara last_active/is_online
-    fetch('/api/presence', {
+    // server picks the spot from IP (once per login) and pushes the snapshot over the map ws
+    fetch('/api/map/presence', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify({})
+        credentials: 'same-origin'
     }).catch(() => {});
 }
 /*
@@ -233,8 +182,6 @@ async function loadLivePlayers() {
 
 //  Modal helpers 
 // Opens any page (login / register / profile) in a centered iframe overlay.
-// UPDATED: URLs now use Flask routes (/login, /register, /profile) instead
-// of the old flat-file paths (login/login.html, etc.).
 
 function openModalPage(page, wide = false) {
     let overlay = document.getElementById('modalOverlay');
@@ -323,7 +270,8 @@ function ensureMarkerStyles() {
 // Builds one avatar marker DOM element for a player.
 function buildAvatarMarkerEl(player) {
     const wrap = document.createElement('div');
-    wrap.className = 'avatar-marker' + (player.isDemo ? ' demo-marker' : '');
+    const isSelf = player.isDemo || (window.myUserId != null && player.id === window.myUserId);
+    wrap.className = 'avatar-marker' + (isSelf ? ' demo-marker' : '');
 
     const img = document.createElement('img');
     img.src = dicebearAvatar(player.avatarSeed || player.gamertag);
@@ -696,15 +644,15 @@ async function handleLogout() {
     alert('Logged out successfully');
 }
 
-// UPDATED: URL paths use Flask routes instead of old flat-file paths
+// Menu links
 function handleMenuClick(page) {
     closeMenu();
     switch (page) {
         case 'home':          map.invalidateSize(); break;
-        case 'chat':          window.location.href = '/chat'; break;          // UPDATED
+        case 'chat':          window.location.href = '/chat'; break;
         case 'notifications': alert('Notifications coming soon'); break;
         case 'settings': openModalPage('/settings'); break;     
-        case 'login':         isLoggedIn ? handleLogout() : openModalPage('/login'); break; // UPDATED
+        case 'login':         isLoggedIn ? handleLogout() : openModalPage('/login'); break;
         case 'settings': openModalPage('/settings', true); break;       
     }
 }
@@ -845,8 +793,6 @@ window.addGame = addGame;
 
 
 document.addEventListener('DOMContentLoaded', () => {
-    console.log('[map.js] DOMContentLoaded', Date.now());
-
     document.getElementById('hamburgerBtn')?.addEventListener('click', toggleMenu);
     document.getElementById('menuCloseBtn')?.addEventListener('click', closeMenu);
     document.getElementById('menuOverlay')?.addEventListener('click', closeMenu);
@@ -1373,15 +1319,8 @@ function spreadOverlappingPlayers(players) {
 
 
 function initMapWebSocket() {
-    console.log('[map.js] initMapWebSocket called', Date.now());
-
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${window.location.host}/ws/map`);
-
-    window._mapWs = ws;
-    console.log('[map ws] init', ws.url);
-
-    ws.onopen = () => console.log('[map ws] open');
 
     ws.onmessage = (e) => {
         let msg;
@@ -1402,11 +1341,6 @@ function initMapWebSocket() {
             );
             }
 
-        window._lastIncoming = cleaned;
-
-        console.log('[ws] players_snapshot count=', cleaned.length);
-        console.table(cleaned.map(p => ({ gamertag: p.gamertag, lat: p.lat, lng: p.lng })));
-        
         window.livePlayers = spreadOverlappingPlayers(
         cleaned.map(p => ({ ...p, mapVisible: true }))
             );
