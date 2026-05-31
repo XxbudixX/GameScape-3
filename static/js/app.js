@@ -1396,7 +1396,7 @@ function initChat() {
 
 //  LANDING  (Three.js globe)
 //  NOTE: The animated rotating Earth globe effect on scroll
-//  uses procedural Three.js.
+//  is AI-generated procedural code using Three.js.
 //  Terrain, cloud, and specular map textures are built at
 //  runtime via fractional Brownian motion (fBm) noise on
 //  an HTML5 Canvas, then applied to a SphereGeometry mesh.
