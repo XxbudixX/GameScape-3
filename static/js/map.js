@@ -391,7 +391,7 @@ function openPlayerModal(player) {
 
     box.innerHTML = `
         <div class="player-modal">
-            <button class="close-btn-modal" onclick="window.closePlayerModal()">✕</button>
+            <button class="close-btn-modal" onclick="window.closePlayerModal()">X</button>
             <div class="player-modal-scroll">
                 <div class="player-modal-header">
                     <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}"
@@ -1043,7 +1043,7 @@ function initEventSystem() {
         overlay.id = 'eventFormOverlay';
         overlay.innerHTML = `
             <div class="event-form-card">
-                <button class="event-form-close" id="eventFormClose">✕</button>
+                <button class="event-form-close" id="eventFormClose">X</button>
 
                 <div class="event-form-title">Create Event</div>
                 <div class="event-form-subtitle">Let nearby players find and join you</div>

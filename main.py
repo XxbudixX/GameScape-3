@@ -149,7 +149,7 @@ def me():
 
     try:
         try:
-            cur.execute('SELECT avatar_seed FROM users WHERE user_id = %s', (session['user_id'],))
+            cur.execute('SELECT avatar_seed, email FROM users WHERE user_id = %s', (session['user_id'],))
         except Exception as e:
             # Om kolumnen saknas (eller gammal schema), skapa den och försök igen
             try:
@@ -158,12 +158,13 @@ def me():
                 pass
             cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
             conn.commit()
-            cur.execute('SELECT avatar_seed FROM users WHERE user_id = %s', (session['user_id'],))
+            cur.execute('SELECT avatar_seed, email FROM users WHERE user_id = %s', (session['user_id'],))
 
         row = cur.fetchone()
         if row and row[0]:
             avatar_seed = row[0]
             session['avatar_seed'] = avatar_seed
+        user_email = row[1] if row and len(row) > 1 else None
 
     except Exception as e:
         print("[/api/me] error:", e)
@@ -182,6 +183,7 @@ def me():
         'logged_in':   True,
         'user_id':     session['user_id'],
         'username':    session['username'],
+        'email':       user_email,
         'role':        session.get('role', False),
         'avatar_seed': avatar_seed
     })
@@ -625,7 +627,80 @@ def save_settings():
         cur.close();
         conn.close()
 
-#  Admin 
+#  Account update (username / email / password)
+
+@app.route('/api/account/update', methods=['POST'])
+def account_update():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+
+    data            = request.get_json() or {}
+    update_type     = data.get('type', '')
+    current_password = data.get('current_password', '')
+
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+
+    try:
+        cur.execute('SELECT password FROM users WHERE user_id = %s', (session['user_id'],))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'success': False, 'error': 'User not found'}), 404
+
+        if not check_password_hash(row[0], current_password):
+            return jsonify({'success': False, 'error': 'Incorrect current password'}), 400
+
+        if update_type == 'username':
+            new_value = data.get('new_value', '').strip()
+            if not new_value:
+                return jsonify({'success': False, 'error': 'Username cannot be empty'}), 400
+            cur.execute('SELECT user_id FROM users WHERE username = %s AND user_id != %s', (new_value, session['user_id']))
+            if cur.fetchone():
+                return jsonify({'success': False, 'error': 'Username already taken'}), 400
+            cur.execute('UPDATE users SET username = %s WHERE user_id = %s', (new_value, session['user_id']))
+            conn.commit()
+            session['username'] = new_value
+            return jsonify({'success': True, 'username': new_value})
+
+        elif update_type == 'email':
+            new_value = data.get('new_value', '').strip()
+            if not new_value or '@' not in new_value:
+                return jsonify({'success': False, 'error': 'Invalid email address'}), 400
+            cur.execute('SELECT user_id FROM users WHERE email = %s AND user_id != %s', (new_value, session['user_id']))
+            if cur.fetchone():
+                return jsonify({'success': False, 'error': 'Email already in use'}), 400
+            cur.execute('UPDATE users SET email = %s WHERE user_id = %s', (new_value, session['user_id']))
+            conn.commit()
+            return jsonify({'success': True, 'email': new_value})
+
+        elif update_type == 'password':
+            new_password     = data.get('new_password', '')
+            confirm_password = data.get('confirm_password', '')
+            if len(new_password) < 6:
+                return jsonify({'success': False, 'error': 'Password must be at least 6 characters'}), 400
+            if new_password != confirm_password:
+                return jsonify({'success': False, 'error': 'Passwords do not match'}), 400
+            cur.execute('UPDATE users SET password = %s WHERE user_id = %s', (generate_password_hash(new_password), session['user_id']))
+            conn.commit()
+            return jsonify({'success': True})
+
+        else:
+            return jsonify({'success': False, 'error': 'Unknown update type'}), 400
+
+    except Exception as e:
+        print(f"[/api/account/update] {e}")
+        try: conn.rollback()
+        except: pass
+        return jsonify({'success': False, 'error': 'Server error'}), 500
+    finally:
+        try: cur.close()
+        except: pass
+        try: conn.close()
+        except: pass
+
+
+#  Admin
 
 @app.route('/api/admin/delete_event/<int:event_id>', methods=['DELETE'])
 def delete_event(event_id):
