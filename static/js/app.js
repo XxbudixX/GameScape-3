@@ -1669,12 +1669,6 @@ function initLanding() {
         renderer.setSize(window.innerWidth, window.innerHeight);
     });
 }
-// ══════════════════════════════════════════════════════════
-//  SETTINGS
-//  Paste this entire block at the bottom of app.js,
-//  just ABOVE the existing "Boot" section, then add
-//  initSettings() to the DOMContentLoaded call list.
-// ══════════════════════════════════════════════════════════
 
 //  Settings 
 function initSettings() {

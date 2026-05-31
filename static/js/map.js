@@ -735,7 +735,7 @@ function initCustomSelects() {
 }
 
 
-//  Admin panel (RESTORED from old project) 
+//  Admin panel 
 // Checks the session role and shows/hides the admin panel accordingly.
 // Also loads the event list so admins can delete events from the map page.
 
@@ -843,7 +843,7 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
-//  EVENT SYSTEM (FULLY RESTORED)
+//  Event system
 //  Lets logged-in users post a gaming event that appears as a pulsing
 //  green ring on the map behind their marker. Other players can click
 //  the marker to see a green event popup with time and game details.
