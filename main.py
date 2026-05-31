@@ -9,7 +9,10 @@ from werkzeug.security import check_password_hash, generate_password_hash
 import os
 import urllib.request
 import urllib.parse
+import ipaddress
 import json
+import math
+import random
 import threading
 from datetime import datetime
 
@@ -23,7 +26,6 @@ try:
 except ImportError:
     SOCK_AVAILABLE = False
     print("WARNING: flask_sock not installed. Run: pip install flask-sock")
-print("SOCK_AVAILABLE =", SOCK_AVAILABLE)
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
@@ -38,6 +40,108 @@ connected_users = {}
 connected_map_clients = set()
 
 STEAM_API_KEY = 'FB52EAE94BCEB7061B36A1B69772CB2E'
+
+MAP_DEFAULT_LAT = 55.605
+MAP_DEFAULT_LNG = 13.008
+
+# Random offset used for the shown map position.
+def randomize_location(lat, lng, radius_m=500):
+    distance = radius_m * math.sqrt(random.random())
+    angle = random.random() * math.tau
+    lat += (distance * math.cos(angle)) / 111320
+    lng += (distance * math.sin(angle)) / (111320 * math.cos(math.radians(lat)))
+    return lat, lng
+
+
+
+def get_client_ip():
+    ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
+    try:
+        if ipaddress.ip_address(ip).is_private:
+            return ''
+    except ValueError:
+        return ''
+    return ip
+
+
+def location_from_ip():
+    ip = get_client_ip()
+    url = f'http://ip-api.com/json/{ip}?fields=status,message,lat,lon' if ip else 'http://ip-api.com/json/?fields=status,message,lat,lon'
+    with urllib.request.urlopen(url, timeout=3) as res:
+        data = json.loads(res.read().decode('utf-8'))
+    if data.get('status') != 'success':
+        raise ValueError(data.get('message') or 'Could not locate IP')
+    return float(data['lat']), float(data['lon'])
+
+
+# Builds the player list that the map and websocket share.
+def fetch_players_for_map():
+    conn, cur = connect_db()
+    if conn is None:
+        return []
+    try:
+        ensure_presence_columns(cur)
+        cur.execute("""
+            SELECT user_id, username, status, latitude, longitude, last_active, avatar_seed, birthday,
+                   COALESCE(is_invisible,FALSE) AS is_invisible,
+                   CASE
+                       WHEN COALESCE(is_invisible,FALSE) THEN 'offline'
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '30 seconds') THEN 'active'
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '10 minutes') THEN 'recent'
+                       ELSE 'offline'
+                   END AS live_status,
+                   CASE
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '30 seconds') THEN 'Just now'
+                       WHEN last_active >= (CURRENT_TIMESTAMP - INTERVAL '10 minutes') THEN 'Recently'
+                       ELSE COALESCE(last_active::text, 'Unknown')
+                   END AS last_active_label
+            FROM users
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+              AND COALESCE(is_invisible,FALSE) = FALSE
+              AND COALESCE(status, 'offline') != 'invisible'
+        """)
+        rows = cur.fetchall()
+        players = []
+        for r in rows:
+            uid = r[0]
+            cur.execute("""
+                SELECT sg.appid, sg.name, sg.icon_url
+                FROM steam_games sg
+                JOIN user_steam_games usg ON sg.appid = usg.appid
+                WHERE usg.user_id = %s LIMIT 6
+            """, (uid,))
+            games = [{'appid': g[0], 'name': g[1], 'icon_url': g[2]} for g in cur.fetchall()]
+            players.append({
+                'id': uid,
+                'gamertag': r[1],
+                'status': r[9] or 'offline',
+                'lat': float(r[3]),
+                'lng': float(r[4]),
+                'lastActive': r[10] or 'Unknown',
+                'avatarSeed': r[6] or r[1],
+                'games': games,
+                'age': calculate_age(r[7]) or '—',
+                'friendship_status': 'none',
+                'is_self': False,
+            })
+        return players
+    except Exception as e:
+        print('fetch_players_for_map error:', e)
+        return []
+    finally:
+        cur.close(); conn.close()
+
+# Sends the newest map state to all open map pages.
+def broadcast_map_snapshot():
+    if not SOCK_AVAILABLE:
+        return
+    payload = json.dumps({'type': 'players_snapshot', 'players': fetch_players_for_map()})
+    for ws in list(connected_map_clients):
+        try:
+            ws.send(payload)
+        except Exception:
+            connected_map_clients.discard(ws)
+
 
 #  Page routes 
 
@@ -65,13 +169,13 @@ def register_page():
 def profile_page():
     return send_from_directory(os.path.join(ROOT, 'templates'), 'profile.html')
 
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    return send_from_directory(os.path.join(ROOT, 'static'), filename)
-    
 @app.route('/settings')
 def settings_page():
     return send_from_directory(os.path.join(ROOT, 'templates'), 'settings.html')
+
+@app.route('/static/<path:filename>')
+def static_files(filename):
+    return send_from_directory(os.path.join(ROOT, 'static'), filename)
 
 
 #  Auth 
@@ -266,10 +370,6 @@ def get_players():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
-        req_lat = None
-        req_lng = None
-        radius_km = 25
-
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
         ensure_friend_requests_table(cur)
         ensure_presence_columns(cur)
@@ -295,28 +395,10 @@ def get_players():
               AND COALESCE(status, 'offline') != 'invisible'
         """)
         rows = cur.fetchall()
-
         players = []
         for r in rows:
-            uid      = r[0]
-            plat     = float(r[3])
-            plng     = float(r[4])
-
-            # Radius filter — only apply if the requesting user has a location
-            if req_lat is not None and req_lng is not None:
-                # Haversine distance in km (pure SQL would be cleaner at scale,
-                # but Python is fine for the current user count)
-                import math
-                dlat  = math.radians(plat - req_lat)
-                dlng  = math.radians(plng - req_lng)
-                a     = (math.sin(dlat / 2) ** 2
-                         + math.cos(math.radians(req_lat))
-                         * math.cos(math.radians(plat))
-                         * math.sin(dlng / 2) ** 2)
-                dist_km = 6371 * 2 * math.asin(math.sqrt(a))
-                if dist_km > radius_km:
-                    continue  # skip players outside the radius
-
+            uid = r[0]
+            # Fetch Steam games for each player
             cur.execute("""
                 SELECT sg.appid, sg.name, sg.icon_url
                 FROM steam_games sg
@@ -351,6 +433,7 @@ def get_players():
     finally:
         cur.close(); conn.close()
 
+
 #  Profile 
 # Requires running steam_migration.sql first (adds about_me and interests columns).
 
@@ -360,51 +443,31 @@ def get_profile():
         return jsonify({'success': False, 'error': 'Not logged in'}), 401
     conn, cur = connect_db()
     try:
-        # Ensure all profile columns exist
+        # Ensure all profile columns exist (safe IF NOT EXISTS is a no-op if already present)
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS about_me       TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS interests      TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS discord        TEXT")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS steam_username TEXT")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed    TEXT")
+        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
         conn.commit()
 
-        target_user = request.args.get('user')
-        if target_user:
-            cur.execute(
-                'SELECT user_id, username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE username = %s',
-                (target_user,)
-            )
-        else:
-            cur.execute(
-                'SELECT user_id, username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE user_id = %s',
-                (session['user_id'],)
-            )
+        cur.execute(
+            'SELECT username, about_me, interests, discord, steam_username, avatar_seed FROM users WHERE user_id = %s',
+            (session['user_id'],)
+        )
         row = cur.fetchone()
-        if not row:
-            return jsonify({'success': False, 'error': 'User not found'}), 404
-
-        row_user_id = row[0]
-
-        # Respect public_profile setting when viewing another user
-        viewing_other = target_user and target_user != session.get('username')
-        if viewing_other:
-            cur.execute("SELECT public_profile FROM users WHERE user_id = %s", (row_user_id,))
-            priv = cur.fetchone()
-            if priv and not priv[0]:
-                return jsonify({'success': False, 'error': 'This profile is private'}), 403
-
-        # Visibility (only relevant for own profile)
-        cur.execute('SELECT COALESCE(is_invisible, FALSE) FROM users WHERE user_id = %s', (row_user_id,))
+        ensure_presence_columns(cur)
+        cur.execute('SELECT COALESCE(is_invisible,FALSE) FROM users WHERE user_id = %s', (session['user_id'],))
         visible_row = cur.fetchone()
-
+        conn.commit()
         return jsonify({
             'success':        True,
-            'username':       row[1],
-            'about_me':       row[2] or '',
-            'interests':      row[3] or '',
-            'discord':        row[4] or '',
-            'steam_username': row[5] or '',
-            'avatar_seed':    row[6] or row[1],
+            'username':       row[0],
+            'about_me':       row[1] or '',
+            'interests':      row[2] or '',
+            'discord':        row[3] or '',
+            'steam_username': row[4] or '',
+            'avatar_seed':    row[5] or row[0],
             'visible':        not bool(visible_row[0]) if visible_row else True,
             'is_invisible':   bool(visible_row[0]) if visible_row else False,
         })
@@ -412,6 +475,7 @@ def get_profile():
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
+
 
 @app.route('/api/profile', methods=['POST'])
 def save_profile():
@@ -452,51 +516,83 @@ def save_profile():
 @app.route('/create_event', methods=['POST'])
 def create_event():
     if 'user_id' not in session:
-        return jsonify({'error': 'Inte inloggad'}), 401
+        return jsonify({'error': "Inte inloggad"}),401
     try:
-        data          = request.json
-        title         = data.get('title')
+        data = request.json
+
+        title = data.get('title')
+        #game_id = data.get('game_id')
         datetime_value = data.get('datetime')
-        description   = data.get('description')
-        min_rank      = data.get('min_rank')
-        max_rank      = data.get('max_rank')
-        appid         = data.get('appid')
+        description = data.get('description')
+        min_rank = data.get('min_rank')
+        max_rank = data.get('max_rank')
+        #game_name = data.get('game_name')
+        appid = data.get('appid')
 
         if not title or not appid or not datetime_value:
-            return jsonify({'error': 'Missing required fields'}), 400
+            return jsonify({"error": "Missing required fields"}), 400
+        """
+        if not game_row:
+            return jsonify({"error": "Game not found"}), 404
+        
+        game_id = game_row[0]"""
 
         conn, cur = connect_db()
+
         cur.execute("""
-            INSERT INTO event (creator_id, appid, title, datetime, description, min_rank, max_rank)
+            INSERT INTO event 
+            (creator_id, 
+            appid,
+            title, 
+            datetime,
+            description,
+            min_rank,
+            max_rank)
             VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (session['user_id'], appid, title, datetime_value, description, min_rank, max_rank))
+                """, (
+        session["user_id"],
+        appid,
+        title,
+        datetime_value,
+        description,
+        min_rank,
+        max_rank
+        ))
+
         conn.commit()
         cur.close()
         conn.close()
-        return jsonify({'message': 'Event skapat'})
-    except Exception as e:
-        return jsonify({'error': str(e)}), 500    
 
-#  Settings 
+        return jsonify({"message": "Event skapat"})
+    except Exception as e:
+        return jsonify({"error":str(e)}) , 500
+    
+
+#  Settings
+
+def ensure_settings_columns(cur):
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS map_visible BOOLEAN DEFAULT true")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS show_status BOOLEAN DEFAULT true")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS public_profile BOOLEAN DEFAULT true")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS msg_permission TEXT DEFAULT 'everyone'")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS search_radius INT DEFAULT 25")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS active_only BOOLEAN DEFAULT false")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_messages BOOLEAN DEFAULT true")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_friends BOOLEAN DEFAULT true")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_events BOOLEAN DEFAULT true")
+    cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_announce BOOLEAN DEFAULT true")
+
+
 @app.route('/api/settings', methods=['GET'])
 def get_settings():
     if 'user_id' not in session:
         return jsonify({'success': False, 'error': 'Not logged in'}), 401
     conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
-        # Add columns safely — no-op if they already exist
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS map_visible    BOOLEAN DEFAULT true")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS show_status    BOOLEAN DEFAULT true")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS public_profile BOOLEAN DEFAULT true")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS msg_permission TEXT    DEFAULT 'everyone'")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS search_radius  INT     DEFAULT 25")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS active_only    BOOLEAN DEFAULT false")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_messages BOOLEAN DEFAULT true")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_friends  BOOLEAN DEFAULT true")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_events   BOOLEAN DEFAULT true")
-        cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_announce BOOLEAN DEFAULT true")
+        ensure_settings_columns(cur)
         conn.commit()
-
         cur.execute("""
             SELECT map_visible, show_status, public_profile, msg_permission,
                    search_radius, active_only,
@@ -505,19 +601,20 @@ def get_settings():
         """, (session['user_id'],))
         row = cur.fetchone()
         return jsonify({
-            'success':        True,
-            'map_visible':    row[0] if row[0] is not None else True,
-            'show_status':    row[1] if row[1] is not None else True,
-            'public_profile': row[2] if row[2] is not None else True,
-            'msg_permission': row[3] or 'everyone',
-            'search_radius':  row[4] if row[4] is not None else 25,
-            'active_only':    row[5] if row[5] is not None else False,
-            'notif_messages': row[6] if row[6] is not None else True,
-            'notif_friends':  row[7] if row[7] is not None else True,
-            'notif_events':   row[8] if row[8] is not None else True,
-            'notif_announce': row[9] if row[9] is not None else True,
+            'success': True,
+            'map_visible': row[0] if row and row[0] is not None else True,
+            'show_status': row[1] if row and row[1] is not None else True,
+            'public_profile': row[2] if row and row[2] is not None else True,
+            'msg_permission': (row[3] if row else None) or 'everyone',
+            'search_radius': row[4] if row and row[4] is not None else 25,
+            'active_only': row[5] if row and row[5] is not None else False,
+            'notif_messages': row[6] if row and row[6] is not None else True,
+            'notif_friends': row[7] if row and row[7] is not None else True,
+            'notif_events': row[8] if row and row[8] is not None else True,
+            'notif_announce': row[9] if row and row[9] is not None else True,
         })
     except Exception as e:
+        conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
@@ -527,34 +624,29 @@ def get_settings():
 def save_settings():
     if 'user_id' not in session:
         return jsonify({'success': False, 'error': 'Not logged in'}), 401
-    data = request.get_json()
-    if not data:
-        return jsonify({'success': False, 'error': 'No data'}), 400
+    data = request.get_json() or {}
     conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
+        ensure_settings_columns(cur)
         cur.execute("""
             UPDATE users SET
-                map_visible    = %s,
-                show_status    = %s,
-                public_profile = %s,
-                msg_permission = %s,
-                search_radius  = %s,
-                active_only    = %s,
-                notif_messages = %s,
-                notif_friends  = %s,
-                notif_events   = %s,
-                notif_announce = %s
-            WHERE user_id = %s
+                map_visible=%s, show_status=%s, public_profile=%s,
+                msg_permission=%s, search_radius=%s, active_only=%s,
+                notif_messages=%s, notif_friends=%s,
+                notif_events=%s, notif_announce=%s
+            WHERE user_id=%s
         """, (
-            bool(data.get('map_visible',    True)),
-            bool(data.get('show_status',    True)),
+            bool(data.get('map_visible', True)),
+            bool(data.get('show_status', True)),
             bool(data.get('public_profile', True)),
             data.get('msg_permission', 'everyone'),
-            int(data.get('search_radius',   25)),
-            bool(data.get('active_only',    False)),
+            int(data.get('search_radius', 25)),
+            bool(data.get('active_only', False)),
             bool(data.get('notif_messages', True)),
-            bool(data.get('notif_friends',  True)),
-            bool(data.get('notif_events',   True)),
+            bool(data.get('notif_friends', True)),
+            bool(data.get('notif_events', True)),
             bool(data.get('notif_announce', True)),
             session['user_id']
         ))
@@ -564,8 +656,7 @@ def save_settings():
         conn.rollback()
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
-        cur.close();
-        conn.close()
+        cur.close(); conn.close()
 
 #  Admin 
 
@@ -786,6 +877,7 @@ def ensure_friend_requests_table(cur):
         _friend_schema_ready = True
 
 
+# Makes sure older local databases have the map presence columns.
 def ensure_presence_columns(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION")
@@ -902,8 +994,8 @@ def update_presence():
             touch_current_user(cur)
 
         conn.commit()
-        broadcast_map_players()
 
+        broadcast_map_snapshot()
         return jsonify({'success': True})
     except Exception as e:
         conn.rollback()
@@ -912,6 +1004,35 @@ def update_presence():
         cur.close(); conn.close()
 
 
+# Saves one randomized map position for this login session.
+@app.route('/api/map/presence', methods=['POST'])
+def update_map_presence():
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_presence_columns(cur)
+        if 'map_lat' not in session or 'map_lng' not in session:
+            session['map_lat'], session['map_lng'] = randomize_location(*location_from_ip())
+        lat, lng = session['map_lat'], session['map_lng']
+        cur.execute("""
+            UPDATE users
+            SET latitude=%s, longitude=%s,
+                is_online=CASE WHEN COALESCE(is_invisible,FALSE) THEN FALSE ELSE TRUE END,
+                last_active=CURRENT_TIMESTAMP
+            WHERE user_id=%s
+        """, (lat, lng, session['user_id']))
+        conn.commit()
+        broadcast_map_snapshot()
+        return jsonify({'success': True, 'lat': lat, 'lng': lng})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
 @app.route('/api/visibility', methods=['POST'])
 def set_visibility():
     if 'user_id' not in session:
@@ -1288,15 +1409,6 @@ def chat_send():
         receiver = cur.fetchone()
         if not receiver:
             return jsonify({'success': False, 'error': 'Recipient not found'}), 404
-
-        # Check receiver's message permission setting
-        cur.execute("SELECT msg_permission FROM users WHERE user_id = %s", (receiver[0],))
-        perm_row = cur.fetchone()
-        perm     = perm_row[0] if perm_row else 'everyone'
-        if perm == 'nobody':
-            return jsonify({'success': False, 'error': 'This user is not accepting messages'}), 403
-        # 'friends' enforcement goes here once a friends table exists
-
         ensure_friend_requests_table(cur)
         ensure_message_read_column(cur)
         cur.execute(
@@ -1456,44 +1568,7 @@ if SOCK_AVAILABLE:
                 connected_users.pop(username, None)
             print(f'[WS] {username} disconnected. Online: {list(connected_users.keys())}')
 
-# --- Map WebSocket ---
 
-def fetch_players_for_map():
-    conn, cur = connect_db()
-    if conn is None or cur is None:
-        return []
-    try:
-        cur.execute("""
-            SELECT user_id, username, status, latitude, longitude, last_active, COALESCE(avatar_seed, username)
-            FROM users
-            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-            AND COALESCE(is_invisible, FALSE) = FALSE
-            AND COALESCE(status, 'offline') != 'invisible'
-            
-        """)
-        rows = cur.fetchall()
-        players = []
-        for r in rows:
-            uid = r[0]
-            
-            games = []
-            players.append({
-                'id': uid,
-                'gamertag': r[1],
-                'status': r[2] or 'offline',
-                'lat': float(r[3]),
-                'lng': float(r[4]),
-                'lastActive': str(r[5]) if r[5] else 'Unknown',
-                'avatarSeed': r[6],
-                'games': games,
-            })
-        return players
-    except Exception as e:
-        print("fetch_players_for_map error:", e)
-        return []
-    finally:
-        cur.close()
-        conn.close()
 
 def broadcast_map_players():
     if not SOCK_AVAILABLE:
@@ -1513,8 +1588,9 @@ def broadcast_map_players():
 
 
 if SOCK_AVAILABLE:
+    # Live map socket sends the newest player list to the map.
     @sock.route('/ws/map')
-    def ws_map(ws):
+    def websocket_map(ws):
         connected_map_clients.add(ws)
 
         def sender():
