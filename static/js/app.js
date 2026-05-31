@@ -314,7 +314,7 @@ function renderGamesEdit() {
                      onerror="this.style.display='none'">
             </div>
             <span class="edit-game-name">${escapeHtml(g.name)}</span>
-            <button class="edit-game-remove" onclick="removeGame(${g.appid})">✕</button>
+            <button class="edit-game-remove" onclick="removeGame(${g.appid})">X</button>
         </div>`).join('');
 }
 
@@ -1706,10 +1706,12 @@ function initSettings() {
 
             const username = data.username;
 
-            // Username & avatar seed display
+            // Username, email & avatar seed display
             const usernameEl = document.getElementById('display-username');
+            const emailEl    = document.getElementById('display-email');
             const seedEl     = document.getElementById('display-avatar-seed');
             if (usernameEl) usernameEl.textContent = username;
+            if (emailEl)    emailEl.textContent    = data.email || '—';
             if (seedEl)     seedEl.textContent     = username;
 
             // Update navbar avatar to match logged-in user
@@ -1857,9 +1859,188 @@ function initSettings() {
     // ── Delete account (placeholder) ────────────────────────
     document.getElementById('deleteAccountBtn')?.addEventListener('click', () => {
         if (confirm('Are you sure you want to delete your account? This cannot be undone.')) {
-            // TODO: call DELETE /api/account when that endpoint exists
             alert('Account deletion not yet implemented.');
         }
+    });
+
+    // ── Edit / Connect modal ─────────────────────────────────
+    const editOverlay = document.getElementById('gs-edit-overlay');
+    const editTitle   = document.getElementById('gs-edit-title');
+    const editFields  = document.getElementById('gs-edit-fields');
+    const editError   = document.getElementById('gs-edit-error');
+    const editSave    = document.getElementById('gs-edit-save');
+    let   editType    = null;
+
+    function safeAttr(str) {
+        return String(str || '').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+    }
+
+    function openEditModal(type) {
+        editType = type;
+        editError.style.display = 'none';
+        editError.textContent   = '';
+        editSave.disabled       = false;
+        editSave.textContent    = 'Save';
+
+        const templates = {
+            username: {
+                title: 'Edit Username',
+                html: `<label class="gs-modal-label">New Username</label>
+                       <input class="gs-modal-input" id="gf1" type="text" autocomplete="off" placeholder="New username">
+                       <label class="gs-modal-label">Current Password</label>
+                       <input class="gs-modal-input" id="gf2" type="password" placeholder="Your current password">`,
+            },
+            email: {
+                title: 'Edit Email',
+                html: `<label class="gs-modal-label">New Email</label>
+                       <input class="gs-modal-input" id="gf1" type="email" autocomplete="off" placeholder="New email address">
+                       <label class="gs-modal-label">Current Password</label>
+                       <input class="gs-modal-input" id="gf2" type="password" placeholder="Your current password">`,
+            },
+            password: {
+                title: 'Change Password',
+                html: `<label class="gs-modal-label">Current Password</label>
+                       <input class="gs-modal-input" id="gf0" type="password" placeholder="Current password">
+                       <label class="gs-modal-label">New Password</label>
+                       <input class="gs-modal-input" id="gf1" type="password" placeholder="New password (min 6 chars)">
+                       <label class="gs-modal-label">Confirm New Password</label>
+                       <input class="gs-modal-input" id="gf2" type="password" placeholder="Confirm new password">`,
+            },
+            discord: {
+                title: 'Discord Handle',
+                html: () => {
+                    const cur = document.getElementById('display-discord')?.textContent;
+                    const val = (cur && cur !== 'Not connected') ? safeAttr(cur) : '';
+                    return `<label class="gs-modal-label">Discord Username</label>
+                            <input class="gs-modal-input" id="gf1" type="text" placeholder="e.g. gamer#1234" value="${val}">`;
+                },
+            },
+            steam: {
+                title: 'Steam Username',
+                html: () => {
+                    const cur = document.getElementById('display-steam')?.textContent;
+                    const val = (cur && cur !== 'Not connected') ? safeAttr(cur) : '';
+                    return `<label class="gs-modal-label">Steam Username</label>
+                            <input class="gs-modal-input" id="gf1" type="text" placeholder="e.g. GameScape99" value="${val}">`;
+                },
+            },
+        };
+
+        const tpl = templates[type];
+        if (!tpl) return;
+        editTitle.textContent = tpl.title;
+        editFields.innerHTML  = typeof tpl.html === 'function' ? tpl.html() : tpl.html;
+        editOverlay.classList.add('open');
+        setTimeout(() => document.getElementById('gf1')?.focus(), 80);
+    }
+
+    function closeEditModal() {
+        editOverlay?.classList.remove('open');
+        editType = null;
+    }
+
+    async function saveEditModal() {
+        editError.style.display = 'none';
+        editSave.disabled       = true;
+        editSave.textContent    = 'Saving…';
+
+        try {
+            if (editType === 'discord' || editType === 'steam') {
+                const val = document.getElementById('gf1')?.value.trim() || '';
+                const discordCur = document.getElementById('display-discord')?.textContent;
+                const steamCur   = document.getElementById('display-steam')?.textContent;
+                const payload = {
+                    about_me:       '',
+                    interests:      '',
+                    discord:        editType === 'discord' ? val : (discordCur !== 'Not connected' ? (discordCur || '') : ''),
+                    steam_username: editType === 'steam'   ? val : (steamCur   !== 'Not connected' ? (steamCur   || '') : ''),
+                    avatar_seed:    '',
+                };
+                const res  = await fetch('/api/profile', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(payload) });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'Could not save');
+
+                if (editType === 'discord') {
+                    const el = document.getElementById('display-discord');
+                    const chip = document.getElementById('chip-discord');
+                    if (el) el.textContent = val || 'Not connected';
+                    if (chip) { chip.textContent = val ? 'Linked' : 'Connect'; chip.classList.toggle('green', !!val); }
+                } else {
+                    const el = document.getElementById('display-steam');
+                    const chip = document.getElementById('chip-steam');
+                    if (el) el.textContent = val || 'Not connected';
+                    if (chip) { chip.textContent = val ? 'Linked' : 'Connect'; chip.classList.toggle('green', !!val); }
+                }
+                closeEditModal();
+                showToast();
+
+            } else {
+                const payload = { type: editType };
+                if (editType === 'password') {
+                    payload.current_password = document.getElementById('gf0')?.value || '';
+                    payload.new_password     = document.getElementById('gf1')?.value || '';
+                    payload.confirm_password = document.getElementById('gf2')?.value || '';
+                } else {
+                    payload.new_value        = document.getElementById('gf1')?.value.trim() || '';
+                    payload.current_password = document.getElementById('gf2')?.value || '';
+                }
+                const res  = await fetch('/api/account/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(payload) });
+                const data = await res.json();
+                if (!data.success) throw new Error(data.error || 'Could not save');
+
+                if (editType === 'username' && data.username) {
+                    const el = document.getElementById('display-username');
+                    if (el) el.textContent = data.username;
+                }
+                if (editType === 'email' && data.email) {
+                    const el = document.getElementById('display-email');
+                    if (el) el.textContent = data.email;
+                }
+                closeEditModal();
+                showToast();
+            }
+        } catch (e) {
+            editError.textContent   = e.message || 'Something went wrong';
+            editError.style.display = 'block';
+        }
+        editSave.disabled    = false;
+        editSave.textContent = 'Save';
+    }
+
+    // ── Avatar randomise ─────────────────────────────────────
+    async function randomiseAvatar() {
+        const seed = 'gs-' + Math.random().toString(36).slice(2, 10);
+        try {
+            const res  = await fetch('/api/profile', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin',
+                body: JSON.stringify({ about_me: '', interests: '', discord: '', steam_username: '', avatar_seed: seed }),
+            });
+            const data = await res.json();
+            if (!data.success) throw new Error(data.error);
+            const img  = document.querySelector('.avatar-img');
+            if (img) img.src = `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed)}`;
+            const seedEl = document.getElementById('display-avatar-seed');
+            if (seedEl) seedEl.textContent = seed;
+            showToast();
+        } catch (e) { console.warn('Avatar randomise failed:', e); }
+    }
+
+    // ── Wire chip clicks ─────────────────────────────────────
+    document.getElementById('chip-username')?.addEventListener('click', () => openEditModal('username'));
+    document.getElementById('chip-email')?.addEventListener('click',    () => openEditModal('email'));
+    document.getElementById('chip-password')?.addEventListener('click', () => openEditModal('password'));
+    document.getElementById('chip-avatar')?.addEventListener('click',   randomiseAvatar);
+    document.getElementById('chip-discord')?.addEventListener('click',  () => openEditModal('discord'));
+    document.getElementById('chip-steam')?.addEventListener('click',    () => openEditModal('steam'));
+
+    // ── Modal close / save bindings ──────────────────────────
+    document.getElementById('gs-edit-close')?.addEventListener('click', closeEditModal);
+    editOverlay?.addEventListener('click', (e) => { if (e.target === editOverlay) closeEditModal(); });
+    editSave?.addEventListener('click', saveEditModal);
+    document.addEventListener('keydown', (e) => {
+        if (!editOverlay?.classList.contains('open')) return;
+        if (e.key === 'Escape') closeEditModal();
+        if (e.key === 'Enter' && !editSave?.disabled) saveEditModal();
     });
 
     // ── Boot ─────────────────────────────────────────────────
