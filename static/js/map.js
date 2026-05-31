@@ -931,12 +931,12 @@ document.addEventListener('DOMContentLoaded', () => {
 //  Lets logged-in users post a gaming event that appears as a pulsing
 //  green ring on the map behind their marker. Other players can click
 //  the marker to see a green event popup with time and game details.
-
+/*
 // Pre-loaded demo events so the map isn't empty on first visit
 let activeEvents = [
     { playerId: 1, eventName: 'Friday Ranked Grind', gameName: 'Valorant', startHour: 8,  startMin: 0,  startAmPm: 'PM', hasEnd: false },
     { playerId: 6, eventName: 'CS2 5v5 Scrim',       gameName: 'CS2',      startHour: 9,  startMin: 30, startAmPm: 'PM', hasEnd: true, endHour: 11, endMin: 0, endAmPm: 'PM' }
-];
+];*/
 
 const pulseMarkers = {}; // playerId → removal handle
 
