@@ -3,7 +3,7 @@ import gevent
 
 monkey.patch_all()
 
-from flask import Flask, request, jsonify, session, send_from_directory, Response
+from flask import Flask, render_template, request, jsonify, session, send_from_directory, Response
 from databas import connect_db
 from werkzeug.security import check_password_hash, generate_password_hash
 import os
@@ -239,6 +239,10 @@ def login():
 def is_admin():
     return session.get('role') is True
 
+# terms of service, privacy policy, etc. 
+@app.route('/terms')
+def terms():
+    return render_template('terms.html')
 
 @app.route('/api/register', methods=['POST'])
 def register():

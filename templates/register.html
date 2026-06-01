@@ -9,7 +9,7 @@
 <body class="modal-page">
 
   <div class="register-container">
-    <button class="close-btn" onclick="window.parent.closeModalPage()">X</button>
+    <button class="close-btn" onclick="window.parent.closeModalPage()">✕</button>
 
     <div class="heading">
       <span class="heading-main">Create</span><span class="heading-accent"> Account</span>
@@ -61,7 +61,7 @@
 
       <div class="terms-group">
         <input type="checkbox" id="terms" class="checkbox" required>
-        <label for="terms">I accept the <a href="#">Terms and Conditions</a></label>
+        <label for="terms">I accept the <a href="#" onclick="window.parent.openModalPage('/terms');return false;">Terms and Conditions</a></label>
       </div>
 
       <button class="register-button" type="submit" id="registerBtn">Register</button>
