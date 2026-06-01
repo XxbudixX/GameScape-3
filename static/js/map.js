@@ -851,6 +851,34 @@ document.addEventListener('DOMContentLoaded', () => {
 // Pre-loaded demo events so the map isn't empty on first visit
 let activeEvents = [];
 
+async function loadActiveEventsFromServer() {
+    try {
+        const res = await fetch('/api/events/active', { credentials: 'same-origin' });
+        const data = await res.json();
+        if (!data.success) return;
+
+        activeEvents = (data.events || []).map(ev => {
+            let startHour = 8, startMin = 0, startAmPm = 'PM';
+            if (ev.datetime) {
+                const d = new Date(ev.datetime);
+                const h24 = d.getHours();
+                startMin = d.getMinutes();
+                startAmPm = h24 >= 12 ? 'PM' : 'AM';
+                startHour = (h24 % 12) || 12;
+            }
+            return {
+                playerId: ev.creator_id,
+                eventName: ev.title,
+                gameName: ev.game_name || `App ${ev.appid}`,
+                startHour, startMin, startAmPm,
+                hasEnd: false
+            };
+        });
+    } catch (_) {}
+}
+
+
+
 const pulseMarkers = {}; // playerId → removal handle
 
 
@@ -1322,7 +1350,7 @@ function initMapWebSocket() {
     const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const ws = new WebSocket(`${proto}//${window.location.host}/ws/map`);
 
-    ws.onmessage = (e) => {
+    ws.onmessage = async (e) => {
         let msg;
         try { msg = JSON.parse(e.data); } catch { return; }
 
@@ -1346,6 +1374,8 @@ function initMapWebSocket() {
             );
         updateLocationCounts();
         renderMapMarkers(window.currentPlayersForMap());
+        await loadActiveEventsFromServer();
+
         refreshEventMarkers?.();
     };
 
