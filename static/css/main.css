@@ -21,7 +21,8 @@ body::before {
   background-size: 40px 40px;
   pointer-events: none; z-index: 0;
 }
-
+/*hidden scrollbar css wide*/
+::-webkit-scrollbar {display: none;}
 
 /* NAVBAR */
 .navbar {
@@ -836,7 +837,7 @@ footer a:hover { text-decoration: underline; }
 /* CSS for settings */
 .gs-wrap{font-family:'Quicksand',sans-serif;background:#07070c;border-radius:0;padding:0;overflow:hidden;border:1px solid rgba(155,89,182,0.25) ;width:100%;height:100%;display:flex;flex-direction:column;}
 .gs-back{background:rgba(30,31,34,0.5);border:1px solid rgba(155,89,182,0.3);color:#c084fc;padding:5px 12px;border-radius:20px;font-size:11px;font-weight:700;font-family:'Quicksand',sans-serif;display:flex;align-items:center;gap:5px;cursor:pointer;}
-.gs-body{display:grid;grid-template-columns:200px 1fr;flex:1;min-height:0;overflow:hidden;}
+.gs-body{display:grid;grid-template-columns:200px 1fr;flex:1;min-height:0;overflow:flex;}
 .gs-content{overflow-y:auto;padding:20px 24px;min-height:0;}
 .gs-sidebar{background:rgba(10,10,14,0.8);border-right:1px solid rgba(155,89,182,0.15);padding:16px 0;overflow-y:auto;min-height:0;}
 .gs-page-title{font-family:'Orbitron',sans-serif;font-size:11px;font-weight:700;color:rgba(155,89,182,0.5);letter-spacing:2px;padding:0 16px 10px;text-transform:uppercase;}
@@ -868,6 +869,7 @@ footer a:hover { text-decoration: underline; }
 .gs-slider-val{font-size:12px;font-weight:700;color:#c084fc;min-width:30px;text-align:right;}
 .gs-select{background:rgba(14,15,18,0.8);border:1px solid rgba(155,89,182,0.3);color:#dbdee1;font-size:11px;font-family:'Quicksand',sans-serif;padding:4px 8px;border-radius:8px;outline:none;}
 .gs-neon-line{height:1px;background:linear-gradient(90deg,transparent,rgba(155,89,182,0.4),rgba(192,132,252,0.6),rgba(155,89,182,0.4),transparent);margin:16px 0 12px;}
+.gs-main{margin:0;padding:0;overflow:auto;min-width:0;background:#07070c}
 
 
 
