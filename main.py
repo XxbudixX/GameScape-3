@@ -1122,6 +1122,10 @@ def update_map_presence():
     if conn is None:
         return jsonify({'success': False, 'error': 'Database error'}), 500
     try:
+        data = request.get_json(silent=True) or {}
+        gps_lat = data.get('lat')
+        gps_lng = data.get('lng')
+
         ensure_presence_columns(cur)
         server_key = session.get('map_login_key')
         if not server_key:
@@ -1141,11 +1145,37 @@ def update_map_presence():
         )
         existing_lat, existing_lng, existing_key = (cur.fetchone() or (None, None, None))
 
-        if existing_key == server_key and existing_lat is not None and existing_lng is not None:
-            # same login, keep the position we already picked
+        if gps_lat is not None and gps_lng is not None:
+            # Real GPS from the browser. Fuzz ~500m for privacy, but only re-fuzz
+            # when the user has actually moved a meaningful distance — otherwise the
+            # stored spot would jitter every few seconds while standing still.
+            try:
+                raw_lat = float(gps_lat); raw_lng = float(gps_lng)
+            except (TypeError, ValueError):
+                raw_lat = raw_lng = None
+
+            if raw_lat is not None and raw_lng is not None:
+                moved = True
+                last_raw = session.get('last_gps')
+                if last_raw:
+                    dlat = (raw_lat - last_raw[0]) * 111320
+                    dlng = (raw_lng - last_raw[1]) * 111320 * math.cos(math.radians(raw_lat))
+                    moved = (dlat * dlat + dlng * dlng) ** 0.5 > 150  
+                if moved or existing_lat is None:
+                    lat, lng = randomize_location(raw_lat, raw_lng)
+                    session['last_gps'] = [raw_lat, raw_lng]
+                    cur.execute("""
+                        UPDATE users SET latitude=%s, longitude=%s, map_login_key=%s WHERE user_id=%s
+                    """, (lat, lng, server_key, session['user_id']))
+                else:
+                    lat, lng = float(existing_lat), float(existing_lng)
+            else:
+                lat, lng = (float(existing_lat), float(existing_lng)) if existing_lat is not None else base_location()
+        elif existing_key == server_key and existing_lat is not None and existing_lng is not None:
+            # No GPS this time, same login -> keep the position we already have
             lat, lng = float(existing_lat), float(existing_lng)
         else:
-            # new login (or first time) -> place from IP, falling back to default
+            # No GPS and new/first login -> place from IP, falling back to default
             base_lat, base_lng = base_location()
             lat, lng = randomize_location(base_lat, base_lng)
             cur.execute("""

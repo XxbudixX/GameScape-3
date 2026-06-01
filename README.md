@@ -1,4 +1,4 @@
-# GameScape 🎮
+# GameScape 
 
 > Find gamers near you on an interactive map — connect, chat, and organise gaming sessions in real time.
 
@@ -23,7 +23,7 @@ GameScape is a full-stack web app where gamers can see each other on a live map,
 
 ---
 
-## Tech stack
+# Tech stack
 
 | Layer | What's used |
 |---|---|
@@ -38,7 +38,7 @@ GameScape is a full-stack web app where gamers can see each other on a live map,
 
 ---
 
-## Project structure
+# Project structure
 
 ```
 gamescape/
@@ -64,22 +64,22 @@ gamescape/
 
 ---
 
-## Getting started
+# Getting started
 
-### 1. Clone the repo
+# 1. Clone the repo
 
 ```bash
 git clone https://github.com/your-username/gamescape.git
 cd gamescape
 ```
 
-### 2. Install dependencies
+# 2. Install dependencies
 
 ```bash
 pip install flask flask-sock psycopg2-binary werkzeug
 ```
 
-### 3. Create `config.ini`
+# 3. Create `config.ini`
 
 This file is gitignored because it contains your database credentials. Create it manually in the project root:
 
@@ -94,7 +94,7 @@ database = your-db-name
 
 > If you're using Supabase, grab the connection string from your project's **Settings → Database** page. Use the **connection pooler** host and port 6543 for best results.
 
-### 4. Set up the database
+# 4. Set up the database
 
 The app expects these tables in the `public` schema:
 
@@ -159,7 +159,7 @@ CREATE TABLE games (
 );
 ```
 
-### 5. Run the app
+# 5. Run the app
 
 ```bash
 python main.py
@@ -169,7 +169,7 @@ Then open `http://localhost:5000` in your browser.
 
 ---
 
-## Environment notes
+# Environment notes
 
 - **`config.ini` is gitignored** — never commit it. Each environment (local, staging, prod) keeps its own copy.
 - The app uses Flask's built-in session (cookie-based). Change `app.secret_key` in `main.py` to something long and random before deploying.
@@ -178,7 +178,7 @@ Then open `http://localhost:5000` in your browser.
 
 ---
 
-## API overview
+# API overview
 
 | Method | Route | Description |
 |---|---|---|
@@ -203,7 +203,7 @@ Then open `http://localhost:5000` in your browser.
 
 ---
 
-## .gitignore
+# .gitignore
 
 Make sure your `.gitignore` includes at least:
 

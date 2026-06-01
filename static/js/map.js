@@ -116,14 +116,26 @@ async function checkSession() {
         }
     } catch (e) { console.warn('Session check failed:', e); }
 }
-function sendMapPresence() {
-    if (!isLoggedIn) return;
-
-    // server picks the spot from IP (once per login) and pushes the snapshot over the map ws
+function _postPresence(body) {
     fetch('/api/map/presence', {
         method: 'POST',
-        credentials: 'same-origin'
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body || {})
     }).catch(() => {});
+}
+
+function sendMapPresence() {
+    if (!isLoggedIn) return;
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            pos => _postPresence({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+            ()  => _postPresence({}),          // permission denied / error -> IP fallback
+            { enableHighAccuracy: true, timeout: 6000, maximumAge: 30000 }
+        );
+    } else {
+        _postPresence({});
+    }
 }
 /*
 function mergeLivePlayer(player) {
