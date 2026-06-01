@@ -135,6 +135,7 @@ def me():
         return jsonify({'logged_in': False, 'role': False})
 
     avatar_seed = session.get('avatar_seed') or session.get('username') or 'GameScape'
+    user_email  = None
 
     conn, cur = connect_db()
     if conn is None or cur is None:
@@ -143,6 +144,7 @@ def me():
             'logged_in':   True,
             'user_id':     session.get('user_id'),
             'username':    session.get('username'),
+            'email':       user_email,
             'role':        session.get('role', False),
             'avatar_seed': avatar_seed
         })
@@ -538,6 +540,19 @@ def create_event():
         end_dt   = _parse_iso(end_time_value) if end_time_value else start_dt + timedelta(hours=2)
 
         conn, cur = connect_db()
+
+        # One event per user: block if they already have an event that hasn't ended yet
+        # (this also covers events scheduled for the future).
+        cur.execute("""
+            SELECT 1 FROM event
+            WHERE creator_id = %s AND (end_time IS NULL OR end_time > now())
+            LIMIT 1
+        """, (session['user_id'],))
+        if cur.fetchone():
+            cur.close(); conn.close()
+            return jsonify({'error': 'You already have an active or scheduled event. '
+                                     'You can only run one event at a time.'}), 409
+
         cur.execute("""
             INSERT INTO event (creator_id, appid, title, datetime, description, min_rank, max_rank, end_time)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
@@ -723,7 +738,7 @@ def events_active():
         conn.commit()
         cur.execute("""
             SELECT e.event_id, e.creator_id, e.title, e.datetime, e.appid,
-                   COALESCE(sg.name, '') AS game_name
+                   COALESCE(sg.name, '') AS game_name, e.end_time
             FROM event e
             LEFT JOIN steam_games sg ON sg.appid = e.appid
             WHERE e.end_time IS NULL OR e.end_time > now()
@@ -737,7 +752,8 @@ def events_active():
             'title': r[2],
             'datetime': r[3].isoformat() if r[3] else None,
             'appid': r[4],
-            'game_name': r[5] or ''
+            'game_name': r[5] or '',
+            'end_time': r[6].isoformat() if r[6] else None
         } for r in rows]
         return jsonify({'success': True, 'events': events})
     except Exception as e:
@@ -749,6 +765,24 @@ def events_active():
 
 
 #  Admin
+
+@app.route('/api/events/mine', methods=['DELETE'])
+def delete_my_event():
+    """Lets a logged-in user delete their own (single) event."""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    if conn is None or cur is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        cur.execute('DELETE FROM event WHERE creator_id = %s', (session['user_id'],))
+        conn.commit()
+        return jsonify({'success': True, 'deleted': cur.rowcount})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
 
 @app.route('/api/admin/delete_event/<int:event_id>', methods=['DELETE'])
 def delete_event(event_id):
@@ -955,7 +989,16 @@ def ensure_friend_requests_table(cur):
     """)
 
 
+_presence_columns_ready = False
+
 def ensure_presence_columns(cur):
+    # The ALTER TABLE statements take an exclusive lock on `users`. Running them
+    # on every request (presence fires every 8s) made concurrent calls block on
+    # each other's locks until the statement timeout -> 500s. They only need to
+    # run once per process, so guard with a module-level flag.
+    global _presence_columns_ready
+    if _presence_columns_ready:
+        return
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS latitude DOUBLE PRECISION")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS longitude DOUBLE PRECISION")
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS last_active TIMESTAMP")
@@ -964,6 +1007,8 @@ def ensure_presence_columns(cur):
     cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS map_login_key TEXT")
     cur.execute("UPDATE users SET is_invisible=TRUE WHERE status='invisible'")
     cur.execute("UPDATE users SET status='offline' WHERE status IS NULL OR status IN ('active','invisible')")
+    _presence_columns_ready = True
+
 
 
 def ensure_message_read_column(cur):
@@ -1790,6 +1835,9 @@ def init_db_schema():
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
         cur.execute("ALTER TABLE event ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ")
         conn.commit()
+        # Create presence columns once at boot, so per-request calls become no-ops.
+        ensure_presence_columns(cur)
+        conn.commit()
         print("[init_db_schema] OK")
     except Exception as e:
         conn.rollback()
@@ -1808,15 +1856,21 @@ def event_cleanup_loop():
                 cur.close(); conn.close()
         except Exception as e:
             print("[event_cleanup] ERROR:", e)
-        gevent.sleep(60)
+        try:
+            gevent.sleep(60)
+        except KeyboardInterrupt:
+            break
 
 if __name__ == "__main__":
     init_db_schema()
     gevent.spawn(event_cleanup_loop)
     print_server_links(5000)
 
-    if SOCK_AVAILABLE:
-        from gevent.pywsgi import WSGIServer
-        WSGIServer(("0.0.0.0", 5000), app).serve_forever()
-    else:
-        app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    try:
+        if SOCK_AVAILABLE:
+            from gevent.pywsgi import WSGIServer
+            WSGIServer(("0.0.0.0", 5000), app).serve_forever()
+        else:
+            app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False)
+    except KeyboardInterrupt:
+        print("\n[server] Shutting down.")

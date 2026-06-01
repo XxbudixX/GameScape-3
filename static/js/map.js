@@ -287,8 +287,11 @@ function buildAvatarMarkerEl(player) {
     wrap.addEventListener('click', (e) => {
         e.stopPropagation();
         const evt = activeEvents.find(ev => ev.playerId === player.id);
-        if (evt) showEventPopup(player, evt);
-        else     showMiniProfile(player);
+        const isOwner = window.myUserId != null && player.id === window.myUserId;
+        // Owner can open their event anytime (to delete it, even if scheduled);
+        // others only see it once it's live.
+        if (evt && (isOwner || isEventLive(evt))) showEventPopup(player, evt);
+        else                                      showMiniProfile(player);
     });
 
     // Hover tooltip
@@ -582,6 +585,12 @@ function showEventPopup(player, evt) {
     const avatarSrc   = dicebearAvatar(player.avatarSeed || player.gamertag);
     const statusColor = { active: '#39d98a', recent: '#f5a623', offline: '#6c6f78' }[player.status] || '#6c6f78';
 
+    // Owner sees a delete button; everyone else sees "Chat Now".
+    const isOwner = window.myUserId != null && player.id === window.myUserId;
+    const actionBtn = isOwner
+        ? `<button class="event-popup-delete" onclick="window._deleteMyEvent()">Delete Event</button>`
+        : `<button class="event-popup-chat" onclick="window.location.href='/chat?user=${encodeURIComponent(player.gamertag)}'">Chat Now</button>`;
+
     activeEventPopup = new maplibregl.Popup({
         closeButton: false, closeOnClick: true, offset: [0, -20], maxWidth: '300px'
     })
@@ -600,11 +609,35 @@ function showEventPopup(player, evt) {
                 <div class="event-popup-row"><span class="event-popup-label">Game</span><span class="event-popup-value">${evt.gameName}</span></div>
                 <div class="event-popup-row"><span class="event-popup-label">Event</span><span class="event-popup-value">${evt.eventName}</span></div>
                 <div class="event-popup-row"><span class="event-popup-label">Time</span><span class="event-popup-value">${timeStr}${endStr}</span></div>
-                <button class="event-popup-chat" onclick="window.location.href='/chat?user=${encodeURIComponent(player.gamertag)}'">Chat Now</button>
+                ${actionBtn}
             </div>`)
         .addClassName('event-map-popup')
         .addTo(map);
 }
+
+// Deletes the current user's event (used by the owner's popup and the
+// "replace existing event" flow). Returns true on success.
+async function deleteMyEvent(confirmFirst = true) {
+    if (confirmFirst && !confirm('Delete your event?')) return false;
+    try {
+        const res  = await fetch('/api/events/mine', { method: 'DELETE', credentials: 'same-origin' });
+        let data;
+        try { data = await res.json(); }
+        catch { data = { success: false, error: `Server returned ${res.status} (route not found — restart the server?)` }; }
+        if (!res.ok || !data.success) { alert(data.error || 'Could not delete event.'); return false; }
+        // Drop it locally and refresh the map + list immediately.
+        activeEvents = activeEvents.filter(e => e.playerId !== window.myUserId);
+        closeAllPopups();
+        refreshEventMarkers?.();
+        renderEventList?.();
+        loadAdminEvents?.();
+        return true;
+    } catch (e) {
+        alert('Could not delete event.');
+        return false;
+    }
+}
+window._deleteMyEvent = () => deleteMyEvent(true);
 
 
 //  Event list (bottom-center button, opens UPWARD) 
@@ -690,6 +723,7 @@ function renderEventList() {
     if (!ref) { const c = map.getCenter(); ref = { lat: c.lat, lng: c.lng }; }
 
     const rows = activeEvents.map(evt => {
+        if (!isEventLive(evt)) return null;   // scheduled-but-not-started events stay hidden
         const player = players.find(p => p.id === evt.playerId);
         if (!player) return null;
         const dist = _distanceKm(ref.lat, ref.lng, player.lat, player.lng);
@@ -981,6 +1015,16 @@ document.addEventListener('DOMContentLoaded', () => {
 // Pre-loaded demo events so the map isn't empty on first visit
 let activeEvents = [];
 
+// Single source of truth for "is this event running right now?"
+// now must be at/after start and before end. Used by the marker click,
+// the event list, and the pulse rings so they all agree on timing.
+function isEventLive(evt, now = Date.now()) {
+    if (!evt) return false;
+    if (evt.startMs != null && now < evt.startMs) return false;
+    if (evt.endMs   != null && now >= evt.endMs)  return false;
+    return true;
+}
+
 async function loadActiveEventsFromServer() {
     try {
         const res = await fetch('/api/events/active', { credentials: 'same-origin' });
@@ -997,10 +1041,13 @@ async function loadActiveEventsFromServer() {
                 startHour = (h24 % 12) || 12;
             }
             return {
+                id: ev.id,
                 playerId: ev.creator_id,
                 eventName: ev.title,
                 gameName: ev.game_name || `App ${ev.appid}`,
                 startHour, startMin, startAmPm,
+                startMs: ev.datetime ? new Date(ev.datetime).getTime() : null,
+                endMs:   ev.end_time ? new Date(ev.end_time).getTime() : null,
                 hasEnd: false
             };
         });
@@ -1391,12 +1438,36 @@ function initEventSystem() {
             };
 
             try {
-                const response = await fetch('/create_event', {
+                const postEvent = () => fetch('/create_event', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload)
                 });
-                const resData = await response.json();
+
+                let response = await postEvent();
+                let resData  = await response.json();
+
+                // 409 = the user already has an active/scheduled event.
+                // Offer to delete it and create this one instead.
+                if (response.status === 409) {
+                    const replace = confirm(
+                        (resData.error || 'You already have an event.') +
+                        '\n\nDelete your existing event and create this new one?'
+                    );
+                    if (!replace) {
+                        errorDiv.textContent = resData.error || 'You already have an event.';
+                        errorDiv.style.display = 'block';
+                        return;
+                    }
+                    const deleted = await deleteMyEvent(false); // no extra confirm
+                    if (!deleted) {
+                        errorDiv.textContent = 'Could not delete your existing event.';
+                        errorDiv.style.display = 'block';
+                        return;
+                    }
+                    response = await postEvent();   // retry now that the old one is gone
+                    resData  = await response.json();
+                }
 
                 if (!response.ok) {
                     errorDiv.textContent = resData.error || 'Failed to create event.';
@@ -1407,6 +1478,12 @@ function initEventSystem() {
                 const myId = window.myUserId;
                 if (!myId) { alert('Missing user id'); return; }
 
+                // Local copy must carry start/end ms so its ring obeys the active
+                // window too (a future event should not ring until it starts).
+                const localEndMs = hasEnd
+                    ? (endIso ? new Date(endIso).getTime() : null)
+                    : (startDate.getTime() + 2 * 60 * 60 * 1000);
+
                 activeEvents = activeEvents.filter(e => e.playerId !== myId);
                 activeEvents.push({
                     playerId: myId,
@@ -1415,6 +1492,8 @@ function initEventSystem() {
                     startHour: startH,
                     startMin: startM,
                     startAmPm: startAp,
+                    startMs: startDate.getTime(),
+                    endMs: localEndMs,
                     hasEnd,
                     endHour: endH,
                     endMin: endM,
@@ -1435,6 +1514,10 @@ function initEventSystem() {
     // Draw initial rings when markers exist
     map.on('load', () => setTimeout(refreshEventMarkers, 500));
     if (map.loaded()) setTimeout(refreshEventMarkers, 300);
+
+    // Re-check periodically so a scheduled event's ring switches on at its
+    // start time (and off at its end) without needing a page refresh.
+    setInterval(() => refreshEventMarkers?.(), 5000);
 }
 
 
@@ -1447,6 +1530,10 @@ function refreshEventMarkers() {
     Object.keys(pulseMarkers).forEach(k => delete pulseMarkers[k]);
 
     activeEvents.forEach(evt => {
+        // Ring only shows while the event is actually running (same check the
+        // marker click and the list use). Scheduled events draw no ring yet.
+        if (!isEventLive(evt)) return;
+
         const player = window.currentPlayersForMap().find(p => p.id === evt.playerId);
         if (!player) return;
         const markerData = playerMarkers[player.id];
