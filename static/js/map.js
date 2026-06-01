@@ -600,10 +600,139 @@ function showEventPopup(player, evt) {
                 <div class="event-popup-row"><span class="event-popup-label">Game</span><span class="event-popup-value">${evt.gameName}</span></div>
                 <div class="event-popup-row"><span class="event-popup-label">Event</span><span class="event-popup-value">${evt.eventName}</span></div>
                 <div class="event-popup-row"><span class="event-popup-label">Time</span><span class="event-popup-value">${timeStr}${endStr}</span></div>
-                <button class="event-popup-chat" onclick="window.location.href='/chat'">Chat Now</button>
+                <button class="event-popup-chat" onclick="window.location.href='/chat?user=${encodeURIComponent(player.gamertag)}'">Chat Now</button>
             </div>`)
         .addClassName('event-map-popup')
         .addTo(map);
+}
+
+
+//  Event list (bottom-center button, opens UPWARD) 
+//  Lists every active map event, sorted nearest → farthest from the
+//  current user (falls back to the map centre if our location is unknown).
+//  Refreshes every 5 seconds.
+
+function _eliEscape(s) {
+    return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Great-circle distance in km between two lat/lng points.
+function _distanceKm(lat1, lng1, lat2, lng2) {
+    const R = 6371;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function _fmtDistance(km) {
+    if (!Number.isFinite(km)) return '—';
+    if (km < 1)  return Math.round(km * 1000) + ' m';
+    if (km < 10) return km.toFixed(1) + ' km';
+    return Math.round(km) + ' km';
+}
+
+function initEventList() {
+    const mapArea = document.querySelector('.map-area');
+    if (!mapArea || document.getElementById('eventListToggle')) return;
+
+    const toggle = document.createElement('button');
+    toggle.id = 'eventListToggle';
+    toggle.className = 'event-list-toggle';
+    toggle.innerHTML = `<span class="elt-dot"></span><span>Events</span><span class="elt-count" id="eventListCount">0</span>`;
+    mapArea.appendChild(toggle);
+
+    const panel = document.createElement('div');
+    panel.id = 'eventListPanel';
+    panel.className = 'event-list-panel';
+    panel.innerHTML = `
+        <div class="event-list-header">
+            <span class="event-list-title">Live Events</span>
+            <span class="event-list-sub">Nearest first</span>
+        </div>
+        <div class="event-list-body" id="eventListBody"></div>`;
+    mapArea.appendChild(panel);
+
+    toggle.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const open = panel.classList.toggle('open');
+        toggle.classList.toggle('active', open);
+        if (open) renderEventList();
+    });
+
+    // Click outside closes the panel.
+    document.addEventListener('click', (e) => {
+        if (!panel.contains(e.target) && !toggle.contains(e.target)) {
+            panel.classList.remove('open');
+            toggle.classList.remove('active');
+        }
+    });
+
+    renderEventList();
+    setInterval(renderEventList, 5000);
+}
+
+function renderEventList() {
+    const body    = document.getElementById('eventListBody');
+    const countEl = document.getElementById('eventListCount');
+    if (!body) return;
+
+    const players = window.currentPlayersForMap();
+
+    // Reference point: our own marker if we can find it, else the map centre.
+    let ref = null;
+    if (window.myUserId != null) {
+        const me = players.find(p => p.id === window.myUserId);
+        if (me && Number.isFinite(me.lat) && Number.isFinite(me.lng)) ref = { lat: me.lat, lng: me.lng };
+    }
+    if (!ref) { const c = map.getCenter(); ref = { lat: c.lat, lng: c.lng }; }
+
+    const rows = activeEvents.map(evt => {
+        const player = players.find(p => p.id === evt.playerId);
+        if (!player) return null;
+        const dist = _distanceKm(ref.lat, ref.lng, player.lat, player.lng);
+        return { evt, player, dist };
+    }).filter(Boolean).sort((a, b) => a.dist - b.dist);
+
+    if (countEl) countEl.textContent = rows.length;
+
+    if (rows.length === 0) {
+        body.innerHTML = '<div class="event-list-empty">No live events right now</div>';
+        return;
+    }
+
+    body.innerHTML = rows.map((r, i) => {
+        const { evt, player } = r;
+        const avatar = dicebearAvatar(player.avatarSeed || player.gamertag);
+        const timeStr = evt.hasEnd
+            ? `${fmtTime(evt.startHour, evt.startMin, evt.startAmPm)} – ${fmtTime(evt.endHour, evt.endMin, evt.endAmPm)}`
+            : `${fmtTime(evt.startHour, evt.startMin, evt.startAmPm)} · 2hr`;
+        return `
+            <div class="event-list-item" data-idx="${i}">
+                <img class="eli-avatar" src="${avatar}" alt="">
+                <div class="eli-main">
+                    <div class="eli-top">
+                        <span class="eli-event">${_eliEscape(evt.eventName) || 'Event'}</span>
+                        <span class="eli-dist">${_fmtDistance(r.dist)}</span>
+                    </div>
+                    <div class="eli-sub">${_eliEscape(evt.gameName)} · ${_eliEscape(player.gamertag)}</div>
+                    <div class="eli-time">${timeStr}</div>
+                </div>
+            </div>`;
+    }).join('');
+
+    body.querySelectorAll('.event-list-item').forEach(el => {
+        el.addEventListener('click', () => {
+            const r = rows[Number(el.dataset.idx)];
+            if (!r) return;
+            document.getElementById('eventListPanel')?.classList.remove('open');
+            document.getElementById('eventListToggle')?.classList.remove('active');
+            map.flyTo({ center: [r.player.lng, r.player.lat], zoom: Math.max(map.getZoom(), 14), essential: true });
+            showEventPopup(r.player, r.evt);
+        });
+    });
 }
 
 
@@ -827,6 +956,7 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(() => { sendMapPresence(); }, 8000);
     checkAdmin();         // show admin panel for admins
     initEventSystem();    // event creation button + form
+    initEventList();      // bottom-center "Events" list (nearest → farthest)
     initCustomSelects();  // custom glassy dropdowns
     initMapWebSocket();
 
