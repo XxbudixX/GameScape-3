@@ -868,7 +868,10 @@ footer a:hover { text-decoration: underline; }
 .gs-slider-val{font-size:12px;font-weight:700;color:#c084fc;min-width:30px;text-align:right;}
 .gs-select{background:rgba(14,15,18,0.8);border:1px solid rgba(155,89,182,0.3);color:#dbdee1;font-size:11px;font-family:'Quicksand',sans-serif;padding:4px 8px;border-radius:8px;outline:none;}
 .gs-neon-line{height:1px;background:linear-gradient(90deg,transparent,rgba(155,89,182,0.4),rgba(192,132,252,0.6),rgba(155,89,182,0.4),transparent);margin:16px 0 12px;}
-
+.gs-content{padding:20px 24px;overflow-y:auto;min-height:0;}
+.gs-content::-webkit-scrollbar{width:4px;}
+.gs-content::-webkit-scrollbar-track{background:rgba(14,15,18,0.5);}
+.gs-content::-webkit-scrollbar-thumb{background:linear-gradient(180deg,#9b59b6,#c084fc);border-radius:4px;}
 
 
 /* 
