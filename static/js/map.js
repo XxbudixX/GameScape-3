@@ -1240,10 +1240,21 @@ function initEventSystem() {
                 startM
             );
 
+            let endIso = null;
+            if (hasEnd) {
+                const endHour24 = (endAp === 'AM')
+                    ? (endH === 12 ? 0 : endH)
+                    : (endH === 12 ? 12 : endH + 12);
+                const endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), endHour24, endM);
+                if (endDate <= startDate) endDate.setDate(endDate.getDate() + 1); // crosses midnight
+                endIso = endDate.toISOString();
+            }
+
             const payload = {
                 title,
                 appid: parseInt(appid, 10),
                 datetime: startDate.toISOString(),
+                end_time: endIso,
                 description,
                 min_rank: min_rank || null,
                 max_rank: max_rank || null

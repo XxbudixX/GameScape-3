@@ -16,7 +16,7 @@ import math
 import random
 import uuid
 import socket
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Install with: pip install flask-sock
 # We import inside a try/except so the app still starts even if flask_sock
@@ -518,22 +518,30 @@ def create_event():
     if 'user_id' not in session:
         return jsonify({'error': 'Inte inloggad'}), 401
     try:
-        data          = request.json
-        title         = data.get('title')
+        data           = request.json
+        title          = data.get('title')
         datetime_value = data.get('datetime')
-        description   = data.get('description')
-        min_rank      = data.get('min_rank')
-        max_rank      = data.get('max_rank')
-        appid         = data.get('appid')
+        description    = data.get('description')
+        min_rank       = data.get('min_rank')
+        max_rank       = data.get('max_rank')
+        appid          = data.get('appid')
+        end_time_value = data.get('end_time')   # optional ISO string from the form
 
         if not title or not appid or not datetime_value:
             return jsonify({'error': 'Missing required fields'}), 400
 
+        # When the event expires: the chosen end time, otherwise 2h after the start.
+        def _parse_iso(s):
+            return datetime.fromisoformat(s.replace('Z', '+00:00'))
+
+        start_dt = _parse_iso(datetime_value)
+        end_dt   = _parse_iso(end_time_value) if end_time_value else start_dt + timedelta(hours=2)
+
         conn, cur = connect_db()
         cur.execute("""
-            INSERT INTO event (creator_id, appid, title, datetime, description, min_rank, max_rank)
-            VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, (session['user_id'], appid, title, datetime_value, description, min_rank, max_rank))
+            INSERT INTO event (creator_id, appid, title, datetime, description, min_rank, max_rank, end_time)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        """, (session['user_id'], appid, title, datetime_value, description, min_rank, max_rank, end_dt))
         conn.commit()
         cur.close()
         conn.close()
@@ -710,12 +718,15 @@ def events_active():
     if conn is None:
         return jsonify({'success': False, 'events': []}), 500
     try:
-        # Enkelt: hämta alla events (du kan filtrera på tid senare)
+        # Delete events whose end_time has passed, then return only the live ones.
+        cur.execute("DELETE FROM event WHERE end_time IS NOT NULL AND end_time < now()")
+        conn.commit()
         cur.execute("""
             SELECT e.event_id, e.creator_id, e.title, e.datetime, e.appid,
                    COALESCE(sg.name, '') AS game_name
             FROM event e
             LEFT JOIN steam_games sg ON sg.appid = e.appid
+            WHERE e.end_time IS NULL OR e.end_time > now()
             ORDER BY e.datetime DESC
             LIMIT 200
         """)
@@ -1777,6 +1788,7 @@ def init_db_schema():
         return
     try:
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_seed TEXT")
+        cur.execute("ALTER TABLE event ADD COLUMN IF NOT EXISTS end_time TIMESTAMPTZ")
         conn.commit()
         print("[init_db_schema] OK")
     except Exception as e:
@@ -1785,8 +1797,22 @@ def init_db_schema():
     finally:
         cur.close(); conn.close()
 
+def event_cleanup_loop():
+    """Background job: deletes events whose end_time has passed (every 60s)."""
+    while True:
+        try:
+            conn, cur = connect_db()
+            if conn and cur:
+                cur.execute("DELETE FROM event WHERE end_time IS NOT NULL AND end_time < now()")
+                conn.commit()
+                cur.close(); conn.close()
+        except Exception as e:
+            print("[event_cleanup] ERROR:", e)
+        gevent.sleep(60)
+
 if __name__ == "__main__":
     init_db_schema()
+    gevent.spawn(event_cleanup_loop)
     print_server_links(5000)
 
     if SOCK_AVAILABLE:

@@ -316,7 +316,7 @@ body.modal-page::before { display: none; }
 }
 .login-container    { height: 600px; padding: 40px 30px 45px; }
 .register-container { height: 670px; padding: 30px 28px 35px; }
-.profile-container  { height: 760px; padding: 26px 26px 28px; max-height: 94vh;  display: flex; flex-direction: column; overflow: hidden; }
+.profile-container  { height: 760px; padding: 26px 26px 28px; max-height: 94vh;  display: flex; flex-direction: column; overflow: auto; }
 
 /* Sweeping neon border background-size:200% lets the position animation
    travel far enough to cover the full element width */
