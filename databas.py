@@ -2,6 +2,17 @@ import psycopg2 as psql
 import configparser
 import os
 
+# main.py runs gevent's monkey.patch_all(), which patches Python sockets to be
+# cooperative. psycopg2 uses a native C socket that gevent can't yield on, so
+# without this, a query that waits on the network blocks the whole process and
+# can hang indefinitely (especially against Supabase's pooler). psycogreen makes
+# psycopg2 cooperate with gevent. Wrapped in try/except so the app still runs if
+try:
+    from psycogreen.gevent import patch_psycopg
+    patch_psycopg()
+except Exception:
+    pass
+
 
 # Opens a connection to the PostgreSQL database using credentials from config.ini.
 # The path to config.ini is resolved relative to this file's location, not wherever
@@ -21,7 +32,9 @@ def connect_db():
         'port':     config['database']['port'].strip(),
         'password': config['database']['password'].strip(),
         'dbname':   config['database']['database'].strip(),
-        'sslmode':  'require'   # SSL is required because the database is hosted remotely on Supabase
+        'sslmode':  'require',  
+        'connect_timeout': 10,  
+        'options': '-c statement_timeout=15000'
     }
 
     try:
