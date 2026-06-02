@@ -1854,7 +1854,6 @@ def print_server_links(port=5000):
     local_ip = get_local_ipv4()
     print(f"[server] Local:   http://127.0.0.1:{port}")
     print(f"[server] IPv4:    http://{local_ip}:{port}")
-    print(f"[server] Network: http://0.0.0.0:{port}")
 
 def init_db_schema():
     conn, cur = connect_db()
