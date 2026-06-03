@@ -1,25 +1,25 @@
 # GameScape 
 
-> Find gamers near you on an interactive map — connect, chat, and organise gaming sessions in real time.
+> Find gamers near you on an interactive map - connect, chat, and organise gaming sessions in real time.
 
 ---
 
 ## What it is
 
-GameScape is a full-stack web app where gamers can see each other on a live map, send direct messages, and pin gaming events so nearby players can join them. It's built with Flask on the backend and plain HTML/CSS/JS on the frontend — no React, no bundler, just files.
+GameScape is a full-stack web app where gamers can see each other on a live map, send direct messages, and pin gaming events so nearby players can join them. It's built with Flask on the backend and plain HTML/CSS/JS on the frontend - no React, no bundler, just files.
 
 ---
 
 ## Features
 
-- **Interactive map** — players show up as avatar markers with live status dots (active / recently active / offline)
-- **Real-time chat** — WebSocket-powered DMs with typing indicators and a contact list that updates as people come online
-- **Gaming events** — pin a session on the map with a custom time picker; other players see a pulsing ring and can click for details
-- **Steam integration** — search Steam's store and add games to your profile; icons and metadata are cached in the DB
-- **Player profiles** — about me, interests, Discord handle, Steam username, and a game showcase
-- **Map filters** — filter visible players by game, age range, and city
-- **Admin panel** — shown only to admin accounts; lets admins delete events and add games
-- **Visibility toggle** — users can hide themselves from the map without logging out
+- **Interactive map** - players show up as avatar markers with live status dots (active / recently active / offline)
+- **Real-time chat** - WebSocket-powered DMs with typing indicators and a contact list that updates as people come online
+- **Gaming events** - pin a session on the map with a custom time picker; other players see a pulsing ring and can click for details
+- **Steam integration** - search Steam's store and add games to your profile; icons and metadata are cached in the DB
+- **Player profiles** - about me, interests, Discord handle, Steam username, and a game showcase
+- **Map filters** - filter visible players by game, age range, and city
+- **Admin panel** - shown only to admin accounts; lets admins delete events and add games
+- **Visibility toggle** - users can hide themselves from the map without logging out
 
 ---
 
@@ -42,9 +42,14 @@ GameScape is a full-stack web app where gamers can see each other on a live map,
 
 ```
 gamescape/
-├── main.py          # Flask app — all API routes and WebSocket handler
+├── main.py          # Flask app - all API routes and WebSocket handler
 ├── databas.py       # DB connection helper (reads config.ini)
 ├── config.ini       # ← NOT in git (see below)
+├── README.md
+│
+├── GameScape_design_dokument.docx    # design docs
+├── GameScape_kravdokument_.docx
+├── GameScape_projektplan.docx
 │
 ├── templates/       # HTML pages served by Flask
 │   ├── landing.html
@@ -52,14 +57,30 @@ gamescape/
 │   ├── chat.html
 │   ├── login.html
 │   ├── register.html
-│   └── profile.html
+│   ├── profile.html
+│   ├── settings.html
+│   └── terms.html
 │
 └── static/
     ├── css/
     │   └── main.css
-    └── js/
-        ├── app.js   # Login, register, profile, chat, landing globe logic
-        └── map.js   # Map markers, events, filters, admin panel
+    ├── js/
+    │   ├── app.js   # Login, register, profile, chat, settings, landing globe
+    │   └── map.js   # Map markers, events, filters, player profile modal, admin
+    └── icons/       # UI + brand SVG icons (loaded via <img> / CSS mask)
+        ├── discord.svg
+        ├── steam.svg
+        ├── google.svg
+        ├── apple.svg
+        ├── x.svg
+        ├── eye-open.svg
+        ├── eye-closed.svg
+        ├── close.svg
+        ├── chevron-down.svg
+        ├── search.svg
+        ├── edit.svg
+        ├── share.svg
+        └── plus.svg
 ```
 
 ---
@@ -171,9 +192,9 @@ Then open `http://localhost:5000` in your browser.
 
 # Environment notes
 
-- **`config.ini` is gitignored** — never commit it. Each environment (local, staging, prod) keeps its own copy.
+- **`config.ini` is gitignored** - never commit it. Each environment (local, staging, prod) keeps its own copy.
 - The app uses Flask's built-in session (cookie-based). Change `app.secret_key` in `main.py` to something long and random before deploying.
-- WebSockets use `ws://` on HTTP and `wss://` on HTTPS automatically — no config needed.
+- WebSockets use `ws://` on HTTP and `wss://` on HTTPS automatically - no config needed.
 - The map markers and player data on the map page are currently demo data hardcoded in `map.js`. Real player locations come from the `/api/players` endpoint once users set their coordinates.
 
 ---
