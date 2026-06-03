@@ -39,37 +39,151 @@ function dicebearAvatar(seed) {
     return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
 }
 
+// Icons live as files in /static/icons and are referenced by name here. This helper builds the <img> tag HTML
+const ICON_PATH = '/static/icons';
+function iconImg(name, cls) {
+    return `<img src="${ICON_PATH}/${name}.svg" alt="${name}"${cls ? ` class="${cls}"` : ''}>`;
+}
+
 function displayGameName(game) {
     return typeof game === 'string' ? game : (game && game.name ? game.name : 'Game');
 }
 
-async function mapFriendAction(action, username) {
+// ---------------------------------------------------------------------------
+//  Unified, DB-synced friend buttons (shared logic with the chat page)
+//  The authoritative state lives in the database and is read from /api/friends.
+//  Every "Add Friend" button anywhere on the page is rendered from the same
+//  cache, so adding / cancelling in one place updates them all instantly.
+// ---------------------------------------------------------------------------
+
+let myFriendState = { friends: [], incoming: [], outgoing: [] };
+
+async function loadMyFriendState() {
+    if (!isLoggedIn) { myFriendState = { friends: [], incoming: [], outgoing: [] }; return; }
+    try {
+        const res  = await fetch('/api/friends', { credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (data && data.success) {
+            myFriendState = {
+                friends:  data.friends  || [],
+                incoming: data.incoming || [],
+                outgoing: data.outgoing || []
+            };
+            gsSyncFriendButtons();
+        }
+    } catch (e) { console.warn('Failed to load friend state:', e); }
+}
+
+// Resolve the current relationship to a user straight from the DB-backed cache.
+function gsFriendState(username) {
+    if (!username) return 'none';
+    if ((myFriendState.friends  || []).some(f => f.username === username)) return 'friends';
+    if ((myFriendState.incoming || []).some(r => r.username === username)) return 'incoming';
+    if ((myFriendState.outgoing || []).some(r => r.username === username)) return 'outgoing';
+    return 'none';
+}
+
+// HTML for the controls inside a wrap, chosen by state.
+// hideRemove: in the full profile modal we only want a Chat button for friends
+// (the Remove action lives on the chat page instead).
+function gsFriendControlsInner(state, hideRemove) {
+    if (state === 'friends')  return `<button class="gs-friend-btn" data-gs-act="chat">Chat</button>`
+                                   + (hideRemove ? '' : `<button class="gs-friend-btn gs-muted" data-gs-act="remove">Remove</button>`);
+    if (state === 'incoming') return `<button class="gs-friend-btn" data-gs-act="accept">Accept</button>`
+                                   + `<button class="gs-friend-btn gs-muted" data-gs-act="ignore">Ignore</button>`;
+    if (state === 'outgoing') return `<button class="gs-friend-btn gs-sent" data-gs-act="cancel">`
+                                   + `<span class="gs-fb-main">Sent!</span><span class="gs-fb-alt">Cancel</span></button>`;
+    return `<button class="gs-friend-btn" data-gs-act="add">Add Friend</button>`;
+}
+
+// Full wrap markup for a given user. `fill` makes the buttons stretch (cards).
+function gsFriendControls(username, fill, opts) {
+    const hideRemove = !!(opts && opts.hideRemove);
+    const state = gsFriendState(username);
+    return `<div class="gs-friend-wrap${fill ? ' gs-fill' : ''}" data-gs-user="${username}" data-gs-state="${state}"${hideRemove ? ' data-gs-noremove="1"' : ''}>`
+         + gsFriendControlsInner(state, hideRemove) + `</div>`;
+}
+
+// Re-render every friend wrap currently in the DOM from the cache so all
+// instances (mini profile, full profile, anything open) stay in sync.
+function gsSyncFriendButtons() {
+    document.querySelectorAll('.gs-friend-wrap[data-gs-user]').forEach(wrap => {
+        const username = wrap.dataset.gsUser;
+        const state    = gsFriendState(username);
+        if (wrap.dataset.gsState !== state) {
+            wrap.dataset.gsState = state;
+            wrap.innerHTML = gsFriendControlsInner(state, wrap.dataset.gsNoremove === '1');
+        }
+    });
+}
+
+// Optimistically move a user to a new state in the local cache (before the
+// server confirms) so the UI feels instant, then sync all buttons.
+function gsSetLocalState(username, state) {
+    ['friends', 'incoming', 'outgoing'].forEach(k => {
+        myFriendState[k] = (myFriendState[k] || []).filter(x => x.username !== username);
+    });
+    if (state === 'friends')  myFriendState.friends.push({ username });
+    if (state === 'incoming') myFriendState.incoming.push({ username });
+    if (state === 'outgoing') myFriendState.outgoing.push({ username });
+    gsSyncFriendButtons();
+}
+
+async function gsFriendRequest(action, username) {
     let url = '/api/friends/request';
     let method = 'POST';
     if (action === 'accept') url = '/api/friends/accept';
     if (action === 'ignore') url = '/api/friends/ignore';
-    if (action === 'remove') { url = `/api/friends/${encodeURIComponent(username)}`; method = 'DELETE'; }
+    if (action === 'cancel' || action === 'remove') { url = `/api/friends/${encodeURIComponent(username)}`; method = 'DELETE'; }
     const options = { method, headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin' };
     if (method !== 'DELETE') options.body = JSON.stringify({ username });
-    const res = await fetch(url, options);
+    const res  = await fetch(url, options);
     const data = await res.json().catch(() => ({}));
     if (!res.ok || data.success === false) throw new Error(data.error || 'Friend action failed');
-    // await loadLivePlayers();
+    return data;
 }
 
-function mapFriendActions(player) {
+// Single delegated handler for every friend button on the page.
+document.addEventListener('click', async (e) => {
+    const btn = e.target.closest('[data-gs-act]');
+    if (!btn) return;
+    const wrap = btn.closest('.gs-friend-wrap');
+    if (!wrap) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    const username = wrap.dataset.gsUser;
+    const act      = btn.dataset.gsAct;
+
+    if (act === 'chat') { window.location.href = `/chat?user=${encodeURIComponent(username)}`; return; }
+
+    // Optimistic state so the button flips immediately.
+    const optimistic = act === 'add' ? 'outgoing'
+                     : act === 'accept' ? 'friends'
+                     : 'none'; // cancel / ignore / remove
+    gsSetLocalState(username, optimistic);
+
+    try {
+        await gsFriendRequest(act, username);
+    } catch (err) {
+        alert(err.message);
+    }
+    // Reconcile with the real DB state (also re-syncs every button).
+    await loadMyFriendState();
+});
+
+// Back-compat shim: the profile/mini-profile templates call mapFriendActions().
+function mapFriendActions(player, opts) {
     if (!isLoggedIn || player.is_self || player.gamertag === currentUsername) return '';
-    const state = player.friendship_status || 'none';
-    if (state === 'friends') return `<button class="mini-profile-btn friend-action-btn" onclick="window.location.href='/chat'">Chat</button><button class="mini-profile-btn friend-action-btn muted" onclick="window._mapFriendAction('remove','${player.gamertag}')">Remove Friend</button>`;
-    if (state === 'incoming') return `<button class="mini-profile-btn friend-action-btn" onclick="window._mapFriendAction('accept','${player.gamertag}')">Accept Friend</button><button class="mini-profile-btn friend-action-btn muted" onclick="window._mapFriendAction('ignore','${player.gamertag}')">Ignore</button>`;
-    if (state === 'outgoing') return `<button class="mini-profile-btn friend-action-btn muted" disabled>Pending Request</button>`;
-    return `<button class="mini-profile-btn friend-action-btn" onclick="window._mapFriendAction('add','${player.gamertag}')">Add Friend</button>`;
+    return gsFriendControls(player.gamertag, true, opts);
 }
 
-window._mapFriendAction = async function(action, username) {
-    try { await mapFriendAction(action, username); closeAllPopups(); }
-    catch (e) { alert(e.message); }
-};
+// Small HTML escaper for values fetched from the API.
+function escMap(s) {
+    return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
 
 function refreshPlayerAvatar(player) {
     const marker = playerMarkers[player.id];
@@ -102,7 +216,15 @@ function setLoggedIn(status, username, avatarSeed) {
     }*/
 
     if (status && username) sendMapPresence();
+
+    // Pull the user's friend relationships so every Add Friend button reflects
+    // the real database state; clear it on logout.
+    if (status) loadMyFriendState();
+    else { myFriendState = { friends: [], incoming: [], outgoing: [] }; gsSyncFriendButtons(); }
 }
+
+// Keep friend buttons in sync across devices/tabs (cheap GET every 5s).
+setInterval(() => { if (isLoggedIn) loadMyFriendState(); }, 5000);
 
 // Checks the server session on page load so a refreshed page stays logged in.
 async function checkSession() {
@@ -149,7 +271,7 @@ function mergeLivePlayer(player) {
         lng: player.lng,
         lat: player.lat,
         lastActive: player.lastActive || 'Unknown',
-        age: player.age || '—',
+        age: player.age || '-',
         location: player.location || 'malmo',
         avatarSeed: player.avatarSeed || player.gamertag || player.username,
         mapVisible: true,
@@ -401,27 +523,32 @@ function openPlayerModal(player) {
 
     const statusText  = { active: 'Active now', recent: `Active ${player.lastActive}`, offline: 'Offline' }[player.status];
     const statusColor = { active: '#39d98a', recent: '#f5a623', offline: '#6c6f78' }[player.status];
-    player.games = (player.games || []).map(displayGameName);
-    const gameTags    = player.games.map(g => `<span class="modal-game-tag">${g}</span>`).join('');
 
     box.innerHTML = `
         <div class="player-modal">
             <button class="close-btn-modal" onclick="window.closePlayerModal()">X</button>
             <div class="player-modal-scroll">
                 <div class="player-modal-header">
-                    <img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(player.avatarSeed || player.gamertag)}"
-                         class="player-avatar-img" alt="${player.gamertag}">
+                    <img src="${dicebearAvatar(player.avatarSeed || player.gamertag)}"
+                         class="player-avatar-img" id="pmAvatar" alt="${escMap(player.gamertag)}">
                     <div class="player-info">
-                        <div class="player-name">${player.gamertag}</div>
+                        <div class="player-name">${escMap(player.gamertag)}</div>
                         <div class="player-status" style="color:${statusColor}">● ${statusText}</div>
                     </div>
                 </div>
-                <div class="player-section"><div class="section-label">Games</div><div class="player-games">${gameTags}</div></div>
-                <div class="player-section"><div class="section-label">Rank</div><div>${player.rank}</div></div>
-                <div class="player-section"><div class="section-label">Age</div><div>${player.age}</div></div>
-                <div class="map-friend-actions">${mapFriendActions(player)}</div>
+                <div class="player-section"><div class="section-label">Games</div><div class="player-games" id="pmGames"><span class="pm-loading">Loading…</span></div></div>
+                <div class="player-section"><div class="section-label">About Me</div><div class="pm-about empty-hint" id="pmAbout">Loading…</div></div>
+                <div class="player-section"><div class="section-label">Interests</div><div class="pm-about empty-hint" id="pmInterests">Loading…</div></div>
+                <div class="player-section"><div class="section-label">Age</div><div>${escMap(player.age)}</div></div>
+                <div class="player-section"><div class="section-label">Connect</div><div class="contact-boxes" id="pmContacts"></div></div>
+                <div class="map-friend-actions">${mapFriendActions(player, { hideRemove: true })}</div>
             </div>
         </div>`;
+
+    // Pull the full, up-to-date profile (games, about, interests, discord, steam)
+    // straight from the database so it matches what the user set on their own
+    // profile page.
+    fillPlayerProfile(player.gamertag);
 
     // Inject styles once prevents duplicating the <style> tag on repeat opens
     if (!document.getElementById('player-modal-styles')) {
@@ -446,7 +573,17 @@ function openPlayerModal(player) {
             .player-games{display:flex;flex-wrap:wrap;gap:8px;}
             .modal-game-tag{background:rgba(30,31,34,0.7);border:1px solid rgba(155,89,182,0.3);padding:4px 10px;border-radius:20px;font-size:12px;}
             .modal-chat-btn{width:100%;background:linear-gradient(135deg,#9b59b6,#7c3aed);border:none;color:white;padding:12px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;margin-top:15px;transition:all 0.2s;}
-            .modal-chat-btn:hover{opacity:0.9;transform:translateY(-1px);}`;
+            .modal-chat-btn:hover{opacity:0.9;transform:translateY(-1px);}
+            .player-modal .pm-about{font-size:13px;line-height:1.5;color:#dbdee1;white-space:pre-wrap;word-break:break-word;}
+            .player-modal .pm-about.empty-hint{color:#6c6f78;font-style:italic;}
+            .player-modal .pm-loading{color:#6c6f78;font-size:12px;font-style:italic;}
+            .player-modal .player-games{align-items:flex-start;}
+            .player-modal figcaption{font-size:10px;margin-top:5px;color:#c084fc;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+            .player-modal .contact-boxes{margin-top:4px;}
+            .player-modal .contact-box.pm-contact-empty{cursor:default;}
+            .player-modal .contact-box.pm-contact-empty:hover{transform:none;box-shadow:none;}
+            .player-modal .contact-box-icon img{width:18px;height:18px;object-fit:contain;display:block;}
+            #mapContactPopupIcon img{width:22px;height:22px;object-fit:contain;display:block;}`;
         document.head.appendChild(s);
     }
 
@@ -481,6 +618,142 @@ window._openFullProfile = function(playerId) {
     const player = window.currentPlayersForMap().find(p => p.id === playerId);
     if (player) { closeAllPopups(); openPlayerModal(player); }
 };
+
+// Discord / Steam contact boxes use the icon files in /static/icons.
+function pmContactBox(kind, label, value) {
+    const has = value && value.trim();
+    return `<div class="contact-box${has ? '' : ' pm-contact-empty'}" ${has ? `data-pm-kind="${kind}" data-pm-label="${escMap(label)}" data-pm-value="${escMap(value)}"` : ''} title="${has ? 'Click to view & copy' : ''}">
+        <div class="contact-box-icon">${iconImg(kind)}</div>
+        <div class="contact-box-content">
+            <span class="contact-box-label">${label}</span>
+            <span class="contact-box-value${has ? '' : ' not-set'}">${has ? escMap(value) : 'Not set'}</span>
+        </div>
+        ${has ? '<div class="contact-box-copy-hint">click to copy</div>' : ''}
+    </div>`;
+}
+
+// Fetch the viewed user's full profile + games and fill the modal sections so
+// they mirror exactly what's shown on the editable profile page.
+async function fillPlayerProfile(username) {
+    const setText = (id, val, emptyMsg) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (val && String(val).trim()) { el.textContent = val; el.className = 'pm-about'; }
+        else { el.textContent = emptyMsg; el.className = 'pm-about empty-hint'; }
+    };
+
+    // Profile fields
+    try {
+        const res  = await fetch(`/api/profile?user=${encodeURIComponent(username)}`, { credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({}));
+        if (data && data.success) {
+            setText('pmAbout', data.about_me, 'No description yet');
+            setText('pmInterests', data.interests, 'No interests added yet');
+            const c = document.getElementById('pmContacts');
+            if (c) c.innerHTML = pmContactBox('discord', 'Discord', data.discord)
+                              + pmContactBox('steam',   'Steam',   data.steam_username);
+            const av = document.getElementById('pmAvatar');
+            if (av && data.avatar_seed) av.src = dicebearAvatar(data.avatar_seed);
+        } else {
+            const priv = res.status === 403;
+            setText('pmAbout', '', priv ? 'This profile is private' : 'No description yet');
+            setText('pmInterests', '', priv ? '' : 'No interests added yet');
+            const c = document.getElementById('pmContacts');
+            if (c) c.innerHTML = '';
+        }
+    } catch (_) {}
+
+    // Games - same figure layout as the profile page (icon + name).
+    try {
+        const gres  = await fetch(`/api/user/games?user=${encodeURIComponent(username)}`, { credentials: 'same-origin' });
+        const gdata = await gres.json().catch(() => ({}));
+        const gel   = document.getElementById('pmGames');
+        if (gel) {
+            const games = (gdata && gdata.games) || [];
+            if (!games.length) {
+                gel.innerHTML = '<span class="empty-hint">No games added yet</span>';
+            } else {
+                gel.innerHTML = games.map((g, i) => `
+                    <figure class="steam-game-figure ${i > 0 ? 'border-left' : ''}">
+                        <div class="steam-icon">
+                            <img src="${escMap(g.icon_url)}" alt="${escMap(g.name)}"
+                                 style="width:100%;height:100%;object-fit:cover;border-radius:10px;"
+                                 onerror="this.style.display='none'">
+                        </div>
+                        <figcaption>${escMap(g.name)}</figcaption>
+                    </figure>`).join('');
+            }
+        }
+    } catch (_) {}
+}
+
+// Clicking a Discord / Steam box opens the same popup style as the profile
+// page (icon, label, selectable value, Copy button). Read-only here since
+// you're viewing another player.
+function ensureMapContactPopup() {
+    let ov = document.getElementById('mapContactPopupOverlay');
+    if (ov) return ov;
+    ov = document.createElement('div');
+    ov.id = 'mapContactPopupOverlay';
+    ov.className = 'contact-popup-overlay';
+    ov.innerHTML = `
+        <div class="contact-popup" id="mapContactPopupCard">
+            <button class="contact-popup-close" id="mapContactPopupClose">X</button>
+            <div class="contact-popup-icon" id="mapContactPopupIcon"></div>
+            <p class="contact-popup-label" id="mapContactPopupLabel"></p>
+            <input class="contact-popup-input" id="mapContactPopupInput" readonly>
+            <div class="contact-popup-actions">
+                <button class="contact-popup-copy" id="mapContactPopupCopy">Copy</button>
+            </div>
+            <p class="contact-popup-feedback" id="mapContactPopupFeedback"></p>
+        </div>`;
+    document.body.appendChild(ov);
+    const close = () => ov.classList.remove('open');
+    ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+    ov.querySelector('#mapContactPopupCard').addEventListener('click', (e) => e.stopPropagation());
+    ov.querySelector('#mapContactPopupClose').addEventListener('click', close);
+    ov.querySelector('#mapContactPopupCopy').addEventListener('click', mapCopyContact);
+    return ov;
+}
+
+function openMapContactPopup(kind, label, value) {
+    const ov = ensureMapContactPopup();
+    ov.querySelector('#mapContactPopupIcon').innerHTML = iconImg(kind === 'discord' ? 'discord' : 'steam');
+    ov.querySelector('#mapContactPopupLabel').textContent = label;
+    const inp = ov.querySelector('#mapContactPopupInput');
+    inp.value = value || '';
+    const copyBtn = ov.querySelector('#mapContactPopupCopy');
+    copyBtn.textContent = 'Copy';
+    copyBtn.classList.remove('copied');
+    copyBtn.style.display = value ? 'block' : 'none';
+    ov.querySelector('#mapContactPopupFeedback').textContent = '';
+    ov.classList.add('open');
+    setTimeout(() => { inp.focus(); if (value) inp.select(); }, 80);
+}
+
+async function mapCopyContact() {
+    const ov       = document.getElementById('mapContactPopupOverlay');
+    const inp      = ov.querySelector('#mapContactPopupInput');
+    const copyBtn  = ov.querySelector('#mapContactPopupCopy');
+    const feedback = ov.querySelector('#mapContactPopupFeedback');
+    try { await navigator.clipboard.writeText(inp.value); }
+    catch (_) { inp.select(); document.execCommand('copy'); }
+    copyBtn.textContent  = '✓ Copied!';
+    copyBtn.classList.add('copied');
+    feedback.textContent = 'Copied to clipboard';
+    feedback.style.color = '#39d98a';
+    setTimeout(() => {
+        copyBtn.textContent = 'Copy';
+        copyBtn.classList.remove('copied');
+        feedback.textContent = '';
+    }, 2000);
+}
+
+document.addEventListener('click', (e) => {
+    const box = e.target.closest('[data-pm-kind]');
+    if (!box) return;
+    openMapContactPopup(box.dataset.pmKind, box.dataset.pmLabel, box.dataset.pmValue);
+});
 
 // Close everything when clicking the map background
 map.on('click', () => {
@@ -556,19 +829,7 @@ function showMiniProfile(player) {
             .mini-profile-value{font-size:13px;color:#e0f2fe;font-weight:600;}
             .mini-profile-games{font-size:12px;color:#94a3b8;font-weight:500;}
             .mini-profile-btn{width:100%;background:#1d4ed8;border:none;color:#e0f2fe;padding:11px 14px;border-radius:6px;font-size:13px;font-weight:800;cursor:pointer;transition:all 0.2s;text-transform:uppercase;letter-spacing:1px;font-family:inherit;}
-            .mini-profile-btn:hover{background:#2563eb;box-shadow:0 4px 14px rgba(37,99,235,0.5);}
-            /* Shared event popup styles */
-            .event-name-link{color:#f0f9ff;text-decoration:none;font-size:16px;font-weight:800;font-family:'Orbitron',sans-serif;transition:color 0.15s;}
-            .event-name-link:hover{color:#39d98a;}
-            .event-popup-header{display:flex;align-items:center;gap:10px;}
-            .event-popup-avatar{width:46px;height:46px;border-radius:50%;border:2px solid rgba(57,217,138,0.5);flex-shrink:0;}
-            .event-popup-status{font-size:11px;font-weight:600;margin-top:2px;}
-            .event-popup-badge{margin-left:auto;background:rgba(57,217,138,0.15);border:1px solid rgba(57,217,138,0.5);color:#39d98a;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:1px;padding:2px 7px;border-radius:20px;white-space:nowrap;}
-            .event-popup-divider{height:1px;background:rgba(57,217,138,0.15);margin:10px -2px;}
-            .event-popup-row{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;}
-            .event-popup-label{font-size:10px;font-weight:700;color:#39d98a;text-transform:uppercase;letter-spacing:1px;}
-            .event-popup-value{font-size:12px;color:#e0f2fe;font-weight:600;text-align:right;max-width:160px;}
-            .event-map-popup .maplibregl-popup-close-button{display:none!important;}`;
+            .mini-profile-btn:hover{background:#2563eb;box-shadow:0 4px 14px rgba(37,99,235,0.5);}`;
         document.head.appendChild(s);
     }
 }
@@ -635,7 +896,7 @@ async function deleteMyEvent(confirmFirst = true) {
         const res  = await fetch('/api/events/mine', { method: 'DELETE', credentials: 'same-origin' });
         let data;
         try { data = await res.json(); }
-        catch { data = { success: false, error: `Server returned ${res.status} (route not found — restart the server?)` }; }
+        catch { data = { success: false, error: `Server returned ${res.status} (route not found - restart the server?)` }; }
         if (!res.ok || !data.success) { alert(data.error || 'Could not delete event.'); return false; }
         // Drop it locally and refresh the map + list immediately.
         activeEvents = activeEvents.filter(e => e.playerId !== window.myUserId);
@@ -673,7 +934,7 @@ function _distanceKm(lat1, lng1, lat2, lng2) {
 }
 
 function _fmtDistance(km) {
-    if (!Number.isFinite(km)) return '—';
+    if (!Number.isFinite(km)) return '-';
     if (km < 1)  return Math.round(km * 1000) + ' m';
     if (km < 10) return km.toFixed(1) + ' km';
     return Math.round(km) + ' km';

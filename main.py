@@ -367,7 +367,7 @@ def get_players():
             plat     = float(r[3])
             plng     = float(r[4])
 
-            # Radius filter — only apply if the requesting user has a location
+            # Radius filter - only apply if the requesting user has a location
             if req_lat is not None and req_lng is not None:
                 # Haversine distance in km (pure SQL would be cleaner at scale,
                 # but Python is fine for the current user count)
@@ -405,7 +405,7 @@ def get_players():
                 'games':      games,
             })
             players[-1].update({
-                'age': calculate_age(meta[0]) or '—',
+                'age': calculate_age(meta[0]) or '-',
                 'rank': 'Unranked',
                 'friendship_status': friendship_status(cur, session['user_id'], uid) if 'user_id' in session and not is_self else 'self',
                 'is_self': is_self,
@@ -571,7 +571,7 @@ def get_settings():
         return jsonify({'success': False, 'error': 'Not logged in'}), 401
     conn, cur = connect_db()
     try:
-        # Add columns safely — no-op if they already exist
+        # Add columns safely - no-op if they already exist
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS map_visible    BOOLEAN DEFAULT true")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS show_status    BOOLEAN DEFAULT true")
         cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS public_profile BOOLEAN DEFAULT true")
@@ -928,14 +928,32 @@ def get_user_games():
         return jsonify({'success': False, 'error': 'Not logged in'}), 401
     conn, cur = connect_db()
     try:
+        # Optionally fetch another user's games (for viewing their profile).
+        target_user = request.args.get('user')
+        if target_user:
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS public_profile BOOLEAN DEFAULT true")
+            conn.commit()
+            cur.execute('SELECT user_id, COALESCE(public_profile, TRUE) FROM users WHERE username = %s', (target_user,))
+            urow = cur.fetchone()
+            if not urow:
+                return jsonify({'success': False, 'error': 'User not found'}), 404
+            # A private profile exposes no games to others.
+            if target_user != session.get('username') and not urow[1]:
+                return jsonify({'success': True, 'games': [], 'username': target_user})
+            target_id = urow[0]
+            target_name = target_user
+        else:
+            target_id = session['user_id']
+            target_name = session.get('username')
         cur.execute("""
             SELECT sg.appid, sg.name, sg.icon_url, sg.header_url
             FROM steam_games sg
             JOIN user_steam_games usg ON sg.appid = usg.appid
             WHERE usg.user_id = %s ORDER BY usg.added_at DESC
-        """, (session['user_id'],))
+        """, (target_id,))
         games = [{'appid': r[0], 'name': r[1], 'icon_url': r[2], 'header_url': r[3]} for r in cur.fetchall()]
-        return jsonify({'success': True, 'games': games})
+        print(f"[get_user_games] requested user='{target_user}' -> querying user_id={target_id} ({target_name}), {len(games)} games")
+        return jsonify({'success': True, 'games': games, 'username': target_name})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
     finally:
@@ -1069,6 +1087,44 @@ def friendship_status(cur, my_id, other_id):
     return status or 'none'
 
 
+def has_live_event(cur, user_id):
+    """True if this user currently hosts an event that hasn't ended yet."""
+    try:
+        cur.execute("""
+            SELECT 1 FROM event
+            WHERE creator_id=%s AND (end_time IS NULL OR end_time > now())
+            LIMIT 1
+        """, (user_id,))
+        return cur.fetchone() is not None
+    except Exception as e:
+        print('has_live_event error:', e)
+        return False
+
+
+def have_message_history(cur, a_id, b_id):
+    """True if these two users have ever exchanged a message."""
+    try:
+        cur.execute("""
+            SELECT 1 FROM messages
+            WHERE (sender_id=%s AND receiver_id=%s) OR (sender_id=%s AND receiver_id=%s)
+            LIMIT 1
+        """, (a_id, b_id, b_id, a_id))
+        return cur.fetchone() is not None
+    except Exception as e:
+        print('have_message_history error:', e)
+        return False
+
+
+def can_message(cur, my_id, other_id):
+    """Who may chat with whom."""
+
+    if friendship_status(cur, my_id, other_id) == 'friends':
+        return True
+    if has_live_event(cur, my_id) or has_live_event(cur, other_id):
+        return True
+    return have_message_history(cur, my_id, other_id)
+
+
 def calculate_age(birthday):
     if not birthday:
         return None
@@ -1147,7 +1203,7 @@ def update_map_presence():
 
         if gps_lat is not None and gps_lng is not None:
             # Real GPS from the browser. Fuzz ~500m for privacy, but only re-fuzz
-            # when the user has actually moved a meaningful distance — otherwise the
+            # when the user has actually moved a meaningful distance - otherwise the
             # stored spot would jitter every few seconds while standing still.
             try:
                 raw_lat = float(gps_lat); raw_lng = float(gps_lng)
@@ -1398,10 +1454,15 @@ def friend_remove(username):
         other = get_user_id_by_username(cur, username)
         if not other:
             return jsonify({'success': False, 'error': 'User not found'}), 404
+        my_id = session['user_id']
+        # This single endpoint now covers two cases:
+        #   1. "Remove Friend"   2. "Cancel"    
+
         cur.execute("""
             DELETE FROM friend_requests
-            WHERE status='accepted' AND ((requester_id=%s AND receiver_id=%s) OR (requester_id=%s AND receiver_id=%s))
-        """, (session['user_id'], other[0], other[0], session['user_id']))
+            WHERE (status='accepted' AND ((requester_id=%s AND receiver_id=%s) OR (requester_id=%s AND receiver_id=%s)))
+               OR (status='pending'  AND requester_id=%s AND receiver_id=%s)
+        """, (my_id, other[0], other[0], my_id, my_id, other[0]))
         conn.commit()
         return jsonify({'success': True})
     except Exception as e:
@@ -1492,7 +1553,7 @@ def chat_history(partner_username):
         my_id = session['user_id']
         ensure_friend_requests_table(cur)
         ensure_message_read_column(cur)
-        if friendship_status(cur, my_id, partner[0]) != 'friends':
+        if not can_message(cur, my_id, partner[0]):
             return jsonify({'success': False, 'error': 'You can only view chats with friends'}), 403
         cur.execute("UPDATE messages SET read_at=CURRENT_TIMESTAMP WHERE sender_id=%s AND receiver_id=%s AND read_at IS NULL", (partner[0], my_id))
         conn.commit()
@@ -1578,8 +1639,10 @@ def chat_send():
 
         ensure_friend_requests_table(cur)
         ensure_message_read_column(cur)
-        if friendship_status(cur, session['user_id'], receiver[0]) != 'friends':
-            return jsonify({'success': False, 'error': 'You can only message friends'}), 403
+        if not can_message(cur, session['user_id'], receiver[0]):
+            print(f"[chat_send] blocked: sender={session['user_id']} -> receiver={receiver[0]} "
+                  f"(not friends, no live event, no history)")
+            return jsonify({'success': False, 'error': 'You can only message friends, or someone hosting a live event'}), 403
         cur.execute(
             'INSERT INTO messages (sender_id, receiver_id, message, reply_to_message_id) VALUES (%s,%s,%s,%s) RETURNING id, sent_at',
             (session['user_id'], receiver[0], message_text, reply_to_id)
@@ -1776,7 +1839,7 @@ def fetch_players_for_map():
                 'lng': float(r[3]),
                 'lastActive': r[8] or 'Unknown',
                 'avatarSeed': r[5],
-                'age': calculate_age(r[6]) or '—',
+                'age': calculate_age(r[6]) or '-',
                 'rank': 'Unranked',
                 'games': games,
             })
