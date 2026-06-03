@@ -692,11 +692,9 @@ function applyVisibilityUI(visible) {
     eyeBtn.title = visible ? 'Hide me from map' : 'Show me on map';
     eyeBtn.style.background  = visible ? 'rgba(57,217,138,0.2)'  : 'rgba(30,31,34,0.6)';
     eyeBtn.style.borderColor = visible ? 'rgba(57,217,138,0.7)'  : 'rgba(155,89,182,0.3)';
-    // Toggle the two SVG groups defined in profile.html instead of rebuilding innerHTML
-    const eyeOpen   = eyeBtn.querySelector('.eye-open');
-    const eyeClosed = eyeBtn.querySelector('.eye-closed');
-    if (eyeOpen)   eyeOpen.style.display   = visible ? '' : 'none';
-    if (eyeClosed) eyeClosed.style.display = visible ? 'none' : '';
+    // Swap the eye icon file: open = visible on map, closed = hidden.
+    const eyeImg = eyeBtn.querySelector('#visibilityEye') || eyeBtn.querySelector('img');
+    if (eyeImg) eyeImg.src = visible ? '/static/icons/eye-open.svg' : '/static/icons/eye-closed.svg';
 }
 
 function initVisibilityToggle() {
@@ -808,6 +806,15 @@ function initChat() {
                 statusSpan.className   = 'status-online';
                 connectWebSocket(data.username);
                 await Promise.all([loadContactsFromDB(), loadFriendsState()]);
+
+                // Arriving from an event's "Chat Now" (/chat?user=Sven): open that
+                // conversation straight away so the user can start writing.
+                const targetUser = new URLSearchParams(window.location.search).get('user');
+                if (targetUser && targetUser !== data.username) {
+                    await openChatWith(targetUser);
+                    // Clean the URL so a refresh doesn't keep reopening it.
+                    history.replaceState({}, '', '/chat');
+                }
             }
         } catch (e) { console.warn('Session check failed:', e); }
     }
@@ -833,6 +840,7 @@ function initChat() {
                 renderFriendRequests();
                 renderContacts();
                 updateUnreadTitle();
+                gsSyncFriendButtons();
             }
         } catch (e) { console.warn('Failed to load friends:', e); }
     }
@@ -845,6 +853,40 @@ function initChat() {
         if ((friendsState.incoming || []).find(r => r.username === username)) return 'incoming';
         if ((friendsState.outgoing || []).find(r => r.username === username)) return 'outgoing';
         return 'none';
+    }
+
+    // ---- Unified, DB-synced friend button (same look/behaviour as the map) ----
+    function gsFriendState(username) {
+        if (!username) return 'none';
+        if ((friendsState.friends || []).some(f => f.username === username)) return 'friends';
+        return requestInfo(username);
+    }
+
+    function gsFriendControlsInner(state) {
+        if (state === 'friends')  return `<button class="gs-friend-btn" data-gs-act="chat">Chat</button>`;
+        if (state === 'incoming') return `<button class="gs-friend-btn" data-gs-act="accept">Accept</button>`
+                                       + `<button class="gs-friend-btn gs-muted" data-gs-act="ignore">Ignore</button>`;
+        if (state === 'outgoing') return `<button class="gs-friend-btn gs-sent" data-gs-act="cancel">`
+                                       + `<span class="gs-fb-main">Sent!</span><span class="gs-fb-alt">Cancel</span></button>`;
+        return `<button class="gs-friend-btn" data-gs-act="add">Add Friend</button>`;
+    }
+
+    function gsFriendControls(username) {
+        const state = gsFriendState(username);
+        return `<div class="gs-friend-wrap" data-gs-user="${escapeHtml(username)}" data-gs-state="${state}">`
+             + gsFriendControlsInner(state) + `</div>`;
+    }
+
+    // Re-render every friend wrap on the page from the current friendsState.
+    function gsSyncFriendButtons() {
+        document.querySelectorAll('.gs-friend-wrap[data-gs-user]').forEach(wrap => {
+            const username = wrap.dataset.gsUser;
+            const state    = gsFriendState(username);
+            if (wrap.dataset.gsState !== state) {
+                wrap.dataset.gsState = state;
+                wrap.innerHTML = gsFriendControlsInner(state);
+            }
+        });
     }
 
     function updateUnreadTitle() {
@@ -955,16 +997,18 @@ function initChat() {
             newUsers.forEach(u => {
                 const item       = document.createElement('div');
                 item.className   = 'search-result-item';
-                const state = u.friendship_status || requestInfo(u.username);
-                const actionLabel = state === 'friends' ? 'Chat' : state === 'incoming' ? 'Accept' : state === 'outgoing' ? 'Pending' : 'Add';
-                item.innerHTML   = `<div class="search-result-avatar"><img src="${avatarUrl(u.avatar_seed || u.username)}" alt=""></div><span>${escapeHtml(u.username)}</span><button class="friend-mini-btn" type="button">${actionLabel}</button>`;
-                item.addEventListener('click', async () => {
-                    userSearchResults.style.display = 'none';
-                    userSearchResults.innerHTML     = '';
-                    if (searchInput) searchInput.value = '';
-                    document.querySelectorAll('.contact-item').forEach(el => el.style.display = 'flex');
-                    if (state === 'friends') openChatWith(u.username);
-                    else if (state !== 'outgoing') { try { await friendAction(state === 'incoming' ? 'accept' : 'add', u.username); } catch (e) { alert(e.message); } }
+                // The friend button is the unified, DB-synced control. Clicking the
+                // rest of the row opens the chat when already friends.
+                item.innerHTML   = `<div class="search-result-avatar"><img src="${avatarUrl(u.avatar_seed || u.username)}" alt=""></div><span class="search-result-name">${escapeHtml(u.username)}</span>${gsFriendControls(u.username)}`;
+                item.addEventListener('click', (e) => {
+                    if (e.target.closest('[data-gs-act]')) return; // handled by delegated friend handler
+                    if (gsFriendState(u.username) === 'friends') {
+                        userSearchResults.style.display = 'none';
+                        userSearchResults.innerHTML     = '';
+                        if (searchInput) searchInput.value = '';
+                        document.querySelectorAll('.contact-item').forEach(el => el.style.display = 'flex');
+                        openChatWith(u.username);
+                    }
                 });
                 userSearchResults.appendChild(item);
             });
@@ -999,6 +1043,7 @@ function initChat() {
                 lastMessage: c.last_message || '',
                 lastTime: c.last_time || '',
                 isOnline: !!c.online,
+                status: c.status || '',
                 unreadCount: Number(c.unread_count || 0),
                 isFriend: !!c.is_friend,
                 avatarSeed: c.avatar_seed || c.username
@@ -1009,10 +1054,11 @@ function initChat() {
             if (activeChatTab === 'friends') allNames.add(f.username);
             if (contactMap[f.username]) {
                 contactMap[f.username].isOnline = !!f.online;
+                contactMap[f.username].status = f.status || contactMap[f.username].status || '';
                 contactMap[f.username].unreadCount = Number(f.unread_count || 0);
                 contactMap[f.username].isFriend = true;
             } else if (activeChatTab === 'friends') {
-                contactMap[f.username] = { lastMessage: '', lastTime: '', isOnline: !!f.online, unreadCount: Number(f.unread_count || 0), isFriend: true, avatarSeed: f.avatar_seed || f.username };
+                contactMap[f.username] = { lastMessage: '', lastTime: '', isOnline: !!f.online, status: f.status || '', unreadCount: Number(f.unread_count || 0), isFriend: true, avatarSeed: f.avatar_seed || f.username };
             }
         });
 
@@ -1046,9 +1092,21 @@ function initChat() {
             const isActive = currentChatPartner === username;
 
             const inboxPreview  = info.lastMessage ? escapeHtml(info.lastMessage) : 'No messages yet';
-            const statusLabel   = activeChatTab === 'friends'
-                ? (info.isOnline ? 'Online' : 'Offline')
-                : (info.lastTime ? `${inboxPreview} · ${escapeHtml(info.lastTime)}` : inboxPreview);
+            let statusClass = '';
+            let statusLabel;
+            if (activeChatTab === 'friends') {
+                const st = (info.status || (info.isOnline ? 'online' : 'offline')).toLowerCase();
+                statusClass = `presence ${escapeHtml(st)}`;
+                // Title-case the status word: online -> Online, away -> Away, etc.
+                statusLabel = escapeHtml(st.charAt(0).toUpperCase() + st.slice(1));
+            } else {
+                statusLabel = info.lastTime ? `${inboxPreview} · ${escapeHtml(info.lastTime)}` : inboxPreview;
+                if (info.isOnline) statusClass = 'online';
+            }
+            // Friends tab shows a coloured presence word; inbox tab shows a message
+            // preview (left in its default colour). `presence` scopes the colours so
+            // only the status word is tinted: online green, offline gray, anything
+            // else (away/busy/etc.) falls back to the amber default.
             const unreadBadge = info.unreadCount > 0 ? `<span class="unread-badge">${info.unreadCount}</span>` : '';
             const removeBtn = activeChatTab === 'friends' && info.isFriend ? `<button class="friend-remove-btn" data-remove-friend="${escapeHtml(username)}" title="Remove friend">Remove</button>` : '';
 
@@ -1059,7 +1117,7 @@ function initChat() {
                 <div class="contact-avatar"><img src="${avatarUrl(info.avatarSeed || username)}" alt=""></div>
                 <div class="contact-info">
                     <div class="contact-name">${escapeHtml(username)} ${unreadBadge}</div>
-                    <div class="contact-status ${info.isOnline ? 'online' : ''}">${statusLabel}</div>
+                    <div class="contact-status ${statusClass}">${statusLabel}</div>
                 </div>
                 ${removeBtn}`;
             div.addEventListener('click', async (e) => {
@@ -1355,6 +1413,26 @@ function initChat() {
         if (actionBtn) {
             try { await friendAction(actionBtn.dataset.friendAction, actionBtn.dataset.username); }
             catch (err) { alert(err.message); }
+        }
+
+        // Unified, DB-synced friend buttons (search results, etc.)
+        const gsBtn = e.target.closest('[data-gs-act]');
+        if (gsBtn) {
+            const wrap = gsBtn.closest('.gs-friend-wrap');
+            if (wrap) {
+                e.preventDefault();
+                e.stopPropagation();
+                const username = wrap.dataset.gsUser;
+                const act      = gsBtn.dataset.gsAct;
+                if (act === 'chat') { openChatWith(username); return; }
+                // Optimistically flip the button, then confirm against the DB.
+                const optimistic = act === 'add' ? 'outgoing' : act === 'accept' ? 'friends' : 'none';
+                wrap.dataset.gsState = optimistic;
+                wrap.innerHTML = gsFriendControlsInner(optimistic);
+                const apiAction = act === 'cancel' ? 'remove' : act;
+                try { await friendAction(apiAction, username); }
+                catch (err) { alert(err.message); await loadFriendsState(); }
+            }
         }
     });
 
@@ -1677,7 +1755,7 @@ function initSettings() {
 
     let settings = {}; // mirrors what's in the DB
 
-    // ── Toast helper ─────────────────────────────────────────
+    // Toast helper
     function showToast() {
         const t = document.getElementById('settings-toast');
         if (!t) return;
@@ -1686,7 +1764,7 @@ function initSettings() {
         t._timer = setTimeout(() => { t.style.opacity = '0'; }, 1800);
     }
 
-    // ── Load settings from DB on page open ───────────────────
+    // Load settings from DB on page open
     async function loadSettings() {
         try {
             const res  = await fetch('/api/settings', { credentials: 'same-origin' });
@@ -1697,7 +1775,7 @@ function initSettings() {
         } catch (e) { console.warn('Failed to load settings:', e); }
     }
 
-    // ── Load profile info for Account section display ────────
+    // Load profile info for Account section display
     async function loadAccountDisplay() {
         try {
             const res  = await fetch('/api/me', { credentials: 'same-origin' });
@@ -1742,7 +1820,7 @@ function initSettings() {
         } catch (e) { console.warn('Failed to load account display:', e); }
     }
 
-    // ── Push full state to DB ────────────────────────────────
+    // Push full state to DB
     async function saveSettings() {
         try {
             const res = await fetch('/api/settings', {
@@ -1756,7 +1834,7 @@ function initSettings() {
         } catch (e) { console.warn('Failed to save settings:', e); }
     }
 
-    // ── Apply DB values → UI ─────────────────────────────────
+    // Apply DB values → UI
     function applyToUI(s) {
         setToggle('toggle-map-visible',    s.map_visible);
         setToggle('toggle-show-status',    s.show_status);
@@ -1783,7 +1861,7 @@ function initSettings() {
         el.classList.toggle('on', !!on);
     }
 
-    // ── Toggle ID → settings key map ────────────────────────
+    // Toggle ID → settings key map
     const TOGGLE_MAP = {
         'toggle-map-visible':    'map_visible',
         'toggle-show-status':    'show_status',
@@ -1796,7 +1874,7 @@ function initSettings() {
         'toggle-start-hero':     'start_hero',
     };
 
-    // ── Toggle click handler ─────────────────────────────────
+    // Toggle click handler
     function handleToggleClick(e) {
         const toggle = e.target.closest('.gs-toggle');
         if (!toggle || !toggle.id) return;
@@ -1814,7 +1892,7 @@ function initSettings() {
         }
     }
 
-    // ── Select change handler ────────────────────────────────
+    // Select change handler
     function handleSelectChange(e) {
         if (e.target.id === 'select-msg-permission') {
             settings.msg_permission = e.target.value;
@@ -1822,7 +1900,7 @@ function initSettings() {
         }
     }
 
-    // ── Slider: live label update, save on release ───────────
+    // Slider: live label update, save on release
     function wireSlider() {
         const slider = document.getElementById('rad');
         const label  = document.getElementById('radVal');
@@ -1838,7 +1916,7 @@ function initSettings() {
         });
     }
 
-    // ── Sidebar nav: highlight + smooth scroll ───────────────
+    // Sidebar nav: highlight + smooth scroll
     function wireSidebarNav() {
         document.querySelectorAll('.gs-nav-item[data-section]').forEach(item => {
             item.addEventListener('click', () => {
@@ -1850,20 +1928,20 @@ function initSettings() {
         });
     }
 
-    // ── Back button ──────────────────────────────────────────
+    // Back button
     document.getElementById('settingsBackBtn')?.addEventListener('click', () => {
         if (window.parent?.closeModalPage) window.parent.closeModalPage();
         else history.back();
     });
 
-    // ── Delete account (placeholder) ────────────────────────
+    // Delete account (placeholder)
     document.getElementById('deleteAccountBtn')?.addEventListener('click', () => {
         if (confirm('Are you sure you want to delete your account? This cannot be undone.')) {
             alert('Account deletion not yet implemented.');
         }
     });
 
-    // ── Edit / Connect modal ─────────────────────────────────
+    // Edit / Connect modal
     const editOverlay = document.getElementById('gs-edit-overlay');
     const editTitle   = document.getElementById('gs-edit-title');
     const editFields  = document.getElementById('gs-edit-fields');
@@ -2007,7 +2085,7 @@ function initSettings() {
         editSave.textContent = 'Save';
     }
 
-    // ── Avatar randomise ─────────────────────────────────────
+    // Avatar randomise
     async function randomiseAvatar() {
         const seed = 'gs-' + Math.random().toString(36).slice(2, 10);
         try {
@@ -2025,7 +2103,7 @@ function initSettings() {
         } catch (e) { console.warn('Avatar randomise failed:', e); }
     }
 
-    // ── Wire chip clicks ─────────────────────────────────────
+    // Wire chip clicks
     document.getElementById('chip-username')?.addEventListener('click', () => openEditModal('username'));
     document.getElementById('chip-email')?.addEventListener('click',    () => openEditModal('email'));
     document.getElementById('chip-password')?.addEventListener('click', () => openEditModal('password'));
@@ -2033,7 +2111,7 @@ function initSettings() {
     document.getElementById('chip-discord')?.addEventListener('click',  () => openEditModal('discord'));
     document.getElementById('chip-steam')?.addEventListener('click',    () => openEditModal('steam'));
 
-    // ── Modal close / save bindings ──────────────────────────
+    // Modal close / save bindings
     document.getElementById('gs-edit-close')?.addEventListener('click', closeEditModal);
     editOverlay?.addEventListener('click', (e) => { if (e.target === editOverlay) closeEditModal(); });
     editSave?.addEventListener('click', saveEditModal);
@@ -2043,7 +2121,7 @@ function initSettings() {
         if (e.key === 'Enter' && !editSave?.disabled) saveEditModal();
     });
 
-    // ── Boot ─────────────────────────────────────────────────
+    // Boot
     document.addEventListener('click',  handleToggleClick);
     document.addEventListener('change', handleSelectChange);
     wireSidebarNav();
