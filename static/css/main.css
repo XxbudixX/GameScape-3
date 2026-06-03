@@ -426,7 +426,6 @@ body.modal-page::before { display: none; }
 .steam-modal-header { padding: 20px 20px 14px; border-bottom: 1px solid rgba(155,89,182,0.2); display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
 .steam-modal-title { font-family: 'Orbitron', sans-serif; font-size: 15px; font-weight: 700; background: linear-gradient(135deg, #c084fc, #9b59b6); -webkit-background-clip: text; background-clip: text; color: transparent; flex: 1; }
 .steam-logo-badge { display: flex; align-items: center; gap: 6px; background: rgba(23,26,33,0.9); border: 1px solid rgba(102,192,244,0.3); border-radius: 8px; padding: 4px 8px; font-size: 10px; font-weight: 700; color: #66c0f4; letter-spacing: 0.5px; }
-.steam-logo-badge svg { fill: #66c0f4; }
 .steam-modal-close { background: rgba(30,31,34,0.6); border: 1px solid rgba(155,89,182,0.3); color: #c084fc; font-size: 14px; cursor: pointer; width: 28px; height: 28px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: all 0.2s; }
 .steam-modal-close:hover { background: rgba(155,89,182,0.2); }
 .steam-search-wrap { padding: 14px 20px; border-bottom: 1px solid rgba(155,89,182,0.15); flex-shrink: 0; }
@@ -453,7 +452,6 @@ body.modal-page::before { display: none; }
 .edit-game-remove:hover { background: rgba(255,0,0,0.3); }
 .steam-add-btn { display: flex; align-items: center; gap: 6px; background: rgba(102,192,244,0.12); border: 1px solid rgba(102,192,244,0.35); color: #66c0f4; font-size: 11px; font-weight: 700; font-family: inherit; padding: 6px 12px; border-radius: 20px; cursor: pointer; margin-top: 8px; transition: all 0.2s; }
 .steam-add-btn:hover { background: rgba(102,192,244,0.22); border-color: #66c0f4; }
-.steam-add-btn svg { fill: #66c0f4; }
 .steam-game-figure { text-align: center; padding: 4px 6px; }
 .steam-icon { width: 50px; height: 50px; border-radius: 12px; background: rgba(23,26,33,0.8); border: 1px solid rgba(102,192,244,0.25); display: flex; align-items: center; justify-content: center; margin: 0 auto; overflow: hidden; }
 .steam-empty-state { display: flex; flex-direction: column; align-items: center; width: 100%; padding: 8px 0; }
