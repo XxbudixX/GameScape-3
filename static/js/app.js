@@ -1789,7 +1789,7 @@ function initSettings() {
             const emailEl    = document.getElementById('display-email');
             const seedEl     = document.getElementById('display-avatar-seed');
             if (usernameEl) usernameEl.textContent = username;
-            if (emailEl)    emailEl.textContent    = data.email || '—';
+            if (emailEl)    emailEl.textContent    = data.email || '-';
             if (seedEl)     seedEl.textContent     = username;
 
             // Update navbar avatar to match logged-in user

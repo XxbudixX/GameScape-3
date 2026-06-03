@@ -39,10 +39,11 @@ function dicebearAvatar(seed) {
     return `https://api.dicebear.com/7.x/avataaars/svg?seed=${encodeURIComponent(seed || 'GameScape')}`;
 }
 
-// Icons live as files in /static/icons and are referenced by name here. This helper builds the <img> tag HTML
+// Icons live as files in /static/icons (e.g. discord.svg, steam.svg). Rendered
+// as a CSS mask so the colour comes from CSS (currentColor), not the file.
 const ICON_PATH = '/static/icons';
 function iconImg(name, cls) {
-    return `<img src="${ICON_PATH}/${name}.svg" alt="${name}"${cls ? ` class="${cls}"` : ''}>`;
+    return `<span class="icon icon-${name}${cls ? ' ' + cls : ''}"></span>`;
 }
 
 function displayGameName(game) {
@@ -206,15 +207,6 @@ function setLoggedIn(status, username, avatarSeed) {
         avatarImg.alt = username;
     }
 
-    /*
-    // Make the demo marker represent the real logged-in user's gamertag/avatar.
-    if (status && username) {
-        const demo = PLAYERS.find(p => p.isDemo);
-        if (demo) { demo.gamertag = username; demo.avatarSeed = currentAvatarSeed; refreshPlayerAvatar(demo); }
-        renderMapMarkers(window.currentPlayersForMap());
-        sendMapPresence();
-    }*/
-
     if (status && username) sendMapPresence();
 
     // Pull the user's friend relationships so every Add Friend button reflects
@@ -259,35 +251,6 @@ function sendMapPresence() {
         _postPresence({});
     }
 }
-/*
-function mergeLivePlayer(player) {
-    const existing = PLAYERS.find(p => p.id === player.id);
-    const mapped = {
-        id: player.id,
-        gamertag: player.gamertag || player.username,
-        games: player.games || [],
-        rank: player.rank || 'Unranked',
-        status: player.status || 'offline',
-        lng: player.lng,
-        lat: player.lat,
-        lastActive: player.lastActive || 'Unknown',
-        age: player.age || '-',
-        location: player.location || 'malmo',
-        avatarSeed: player.avatarSeed || player.gamertag || player.username,
-        mapVisible: true,
-        friendship_status: player.friendship_status || 'none',
-        is_self: !!player.is_self,
-        isLive: true
-    };
-    if (mapped.gamertag === currentUsername) {
-        const demo = PLAYERS.find(p => p.isDemo);
-        if (demo) Object.assign(demo, mapped, { id: demo.id, isDemo: true, mapVisible: getDemoVisible() });
-        return;
-    }
-    if (existing) Object.assign(existing, mapped);
-    else PLAYERS.push(mapped);
-}
-*/
 async function loadLivePlayers() {
     return; // WS-only: polling avstängt
 
@@ -362,44 +325,7 @@ function closeModalPage() {
 
 const playerMarkers = {}; // playerId → { marker, el }
 
-function ensureMarkerStyles() {
-    if (document.getElementById('avatar-marker-styles')) return;
-    const s = document.createElement('style');
-    s.id = 'avatar-marker-styles';
-    s.textContent = `
-        /* Zero-size wrapper all children are absolutely centred on the map coordinate */
-        .avatar-marker { position:relative; width:0; height:0; cursor:pointer; }
-        .avatar-marker img {
-            position:absolute; width:40px; height:40px;
-            top:-20px; left:-20px;
-            border-radius:50%; border:2.5px solid #1e1f22;
-            display:block; transition:transform 0.15s; z-index:2;
-        }
-        .avatar-marker:hover img { transform:scale(1.12); }
-        /* Status dot bottom-right corner of the avatar */
-        .avatar-marker .status-ring {
-            position:absolute; bottom:-20px; right:-20px;
-            width:12px; height:12px;
-            border-radius:50%; border:2px solid #0e0f12; z-index:3;
-            transform:translate(50%,-50%);
-        }
-        /* Demo player gets a purple border/glow to distinguish themselves */
-        .avatar-marker.demo-marker img {
-            border-color:#c084fc;
-            box-shadow:0 0 10px rgba(192,132,252,0.6);
-        }
-        /* Event pulse rings sit behind the avatar (z-index:1) */
-        .avatar-marker .pulse-ring {
-            position:absolute; width:26px; height:26px;
-            border-radius:50%; border:2px solid #39d98a;
-            top:-13px; left:-13px;
-            animation:event-pulse 2.4s ease-out infinite; opacity:0; z-index:1;
-        }
-        .avatar-marker .pulse-ring.delay1 { animation-delay:0.8s; }
-        .avatar-marker .pulse-ring.delay2 { animation-delay:1.6s; }
-    `;
-    document.head.appendChild(s);
-}
+function ensureMarkerStyles() { /* avatar marker styles moved to main.css */ }
 
 // Builds one avatar marker DOM element for a player.
 function buildAvatarMarkerEl(player) {
@@ -473,11 +399,6 @@ function renderMapMarkers(playerList) {
     });
     updatePlayerCount(playerList);
 }
-/*
-map.on('load', () => {
-    renderMapMarkers(window.currentPlayersForMap());
-});
-*/
 
 map.on('load', () => {
     renderMapMarkers(window.currentPlayersForMap());
@@ -536,9 +457,9 @@ function openPlayerModal(player) {
                         <div class="player-status" style="color:${statusColor}">● ${statusText}</div>
                     </div>
                 </div>
-                <div class="player-section"><div class="section-label">Games</div><div class="player-games" id="pmGames"><span class="pm-loading">Loading…</span></div></div>
-                <div class="player-section"><div class="section-label">About Me</div><div class="pm-about empty-hint" id="pmAbout">Loading…</div></div>
-                <div class="player-section"><div class="section-label">Interests</div><div class="pm-about empty-hint" id="pmInterests">Loading…</div></div>
+                <div class="player-section"><div class="section-label">Games</div><div class="player-games" id="pmGames"><span class="pm-loading">Loading...</span></div></div>
+                <div class="player-section"><div class="section-label">About Me</div><div class="pm-about empty-hint" id="pmAbout">Loading...</div></div>
+                <div class="player-section"><div class="section-label">Interests</div><div class="pm-about empty-hint" id="pmInterests">Loading...</div></div>
                 <div class="player-section"><div class="section-label">Age</div><div>${escMap(player.age)}</div></div>
                 <div class="player-section"><div class="section-label">Connect</div><div class="contact-boxes" id="pmContacts"></div></div>
                 <div class="map-friend-actions">${mapFriendActions(player, { hideRemove: true })}</div>
@@ -550,42 +471,6 @@ function openPlayerModal(player) {
     // profile page.
     fillPlayerProfile(player.gamertag);
 
-    // Inject styles once prevents duplicating the <style> tag on repeat opens
-    if (!document.getElementById('player-modal-styles')) {
-        const s   = document.createElement('style');
-        s.id      = 'player-modal-styles';
-        s.textContent = `
-            .player-modal{width:100%;height:100%;background:rgba(14,15,18,0.95);backdrop-filter:blur(32px);border-radius:28px;padding:30px 25px 35px;color:#dbdee1;position:relative;box-sizing:border-box;border:1px solid rgba(155,89,182,0.3);}
-            // ::before is the actual gradient border; ::after is an inner fill that covers it,
-            // leaving only a thin rim visible. The neon-sweep keyframe slides the gradient's
-            // background-position so it appears to travel around the card border.
-            .player-modal::before{content:'';position:absolute;top:-2px;left:-2px;right:-2px;bottom:-2px;background:linear-gradient(90deg,transparent,#9b59b6,#c084fc,#e9d5ff,#c084fc,#9b59b6,transparent);border-radius:30px;z-index:-2;animation:neon-sweep 3s linear infinite;background-size:200% 100%;pointer-events:none;}
-            .player-modal::after{content:'';position:absolute;top:2px;left:2px;right:2px;bottom:2px;background:rgba(14,15,18,0.95);backdrop-filter:blur(32px);border-radius:26px;z-index:-1;pointer-events:none;}
-            @keyframes neon-sweep{0%{background-position:100% 0}100%{background-position:-100% 0}}
-            .close-btn-modal{position:absolute;top:15px;right:15px;background:rgba(30,31,34,0.6);border:1px solid rgba(155,89,182,0.4);color:#c084fc;font-size:16px;cursor:pointer;width:30px;height:30px;border-radius:50%;display:flex;align-items:center;justify-content:center;transition:all 0.2s;z-index:10;}
-            .close-btn-modal:hover{background:rgba(155,89,182,0.2);border-color:rgba(155,89,182,0.8);}
-            .player-modal-header{display:flex;align-items:center;gap:15px;margin-bottom:25px;}
-            .player-modal-scroll{flex:1;overflow-y:auto;padding:30px 25px 35px;scrollbar-width:none;}
-            .player-modal-scroll::-webkit-scrollbar{display:none;}
-            .player-avatar-img{width:62px;height:62px;border-radius:50%;border:2.5px solid #9b59b6;box-shadow:0 0 12px rgba(155,89,182,0.4);object-fit:cover;flex-shrink:0;}
-            .player-name{font-size:20px;font-weight:700;} .player-status{font-size:12px;margin-top:5px;}
-            .player-section{margin-bottom:18px;} .section-label{font-size:11px;font-weight:600;color:#c084fc;text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;}
-            .player-games{display:flex;flex-wrap:wrap;gap:8px;}
-            .modal-game-tag{background:rgba(30,31,34,0.7);border:1px solid rgba(155,89,182,0.3);padding:4px 10px;border-radius:20px;font-size:12px;}
-            .modal-chat-btn{width:100%;background:linear-gradient(135deg,#9b59b6,#7c3aed);border:none;color:white;padding:12px;border-radius:40px;font-size:14px;font-weight:bold;cursor:pointer;margin-top:15px;transition:all 0.2s;}
-            .modal-chat-btn:hover{opacity:0.9;transform:translateY(-1px);}
-            .player-modal .pm-about{font-size:13px;line-height:1.5;color:#dbdee1;white-space:pre-wrap;word-break:break-word;}
-            .player-modal .pm-about.empty-hint{color:#6c6f78;font-style:italic;}
-            .player-modal .pm-loading{color:#6c6f78;font-size:12px;font-style:italic;}
-            .player-modal .player-games{align-items:flex-start;}
-            .player-modal figcaption{font-size:10px;margin-top:5px;color:#c084fc;max-width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-            .player-modal .contact-boxes{margin-top:4px;}
-            .player-modal .contact-box.pm-contact-empty{cursor:default;}
-            .player-modal .contact-box.pm-contact-empty:hover{transform:none;box-shadow:none;}
-            .player-modal .contact-box-icon img{width:18px;height:18px;object-fit:contain;display:block;}
-            #mapContactPopupIcon img{width:22px;height:22px;object-fit:contain;display:block;}`;
-        document.head.appendChild(s);
-    }
 
     overlay.classList.add('show');
     box.classList.add('show');
@@ -810,28 +695,6 @@ function showMiniProfile(player) {
         .addClassName('mini-profile-popup')
         .addTo(map);
 
-    // Inject styles once
-    if (!document.getElementById('mini-profile-styles')) {
-        const s   = document.createElement('style');
-        s.id      = 'mini-profile-styles';
-        s.textContent = `
-            .mini-profile-popup .maplibregl-popup-content{background:#0f1923!important;border:1.5px solid rgba(96,165,250,0.5)!important;border-radius:10px!important;padding:20px 22px 18px!important;box-shadow:0 16px 48px rgba(0,0,0,0.7)!important;min-width:260px;}
-            .mini-profile-popup .maplibregl-popup-tip{border-top-color:rgba(96,165,250,0.5)!important;}
-            .mini-profile-popup .maplibregl-popup-close-button{display:none!important;}
-            .mini-profile-inner{display:flex;flex-direction:column;gap:12px;}
-            .mini-profile-header{display:flex;align-items:center;gap:14px;}
-            .mini-profile-avatar{width:50px;height:50px;border-radius:50%;border:1.5px solid rgba(96,165,250,0.4);object-fit:cover;flex-shrink:0;background:#0f1923;}
-            .mini-profile-name{font-size:17px;font-weight:800;color:#f0f9ff;font-family:'Orbitron',sans-serif;letter-spacing:0.5px;}
-            .mini-profile-status{font-size:12px;margin-top:3px;font-weight:700;}
-            .mini-profile-divider{height:1px;background:rgba(96,165,250,0.15);}
-            .mini-profile-row{display:flex;justify-content:space-between;align-items:center;}
-            .mini-profile-label{font-size:10px;font-weight:700;color:#60a5fa;text-transform:uppercase;letter-spacing:1px;}
-            .mini-profile-value{font-size:13px;color:#e0f2fe;font-weight:600;}
-            .mini-profile-games{font-size:12px;color:#94a3b8;font-weight:500;}
-            .mini-profile-btn{width:100%;background:#1d4ed8;border:none;color:#e0f2fe;padding:11px 14px;border-radius:6px;font-size:13px;font-weight:800;cursor:pointer;transition:all 0.2s;text-transform:uppercase;letter-spacing:1px;font-family:inherit;}
-            .mini-profile-btn:hover{background:#2563eb;box-shadow:0 4px 14px rgba(37,99,235,0.5);}`;
-        document.head.appendChild(s);
-    }
 }
 
 
