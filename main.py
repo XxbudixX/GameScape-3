@@ -848,8 +848,12 @@ def get_events():
 #  Steam 
 
 def _steam_request(url):
+    import ssl
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
     req = urllib.request.Request(url, headers={'User-Agent': 'GameScape/1.0'})
-    with urllib.request.urlopen(req, timeout=8) as resp:
+    with urllib.request.urlopen(req, timeout=8, context=ctx) as resp:
         return json.loads(resp.read().decode())
 
 
