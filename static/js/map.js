@@ -600,6 +600,7 @@ function ensureMapContactPopup() {
     ov.querySelector('#mapContactPopupCopy').addEventListener('click', mapCopyContact);
     return ov;
 }
+// Öppnar popup-fönstret och visar spelarens kontaktinformation (Discord eller Steam).
 
 function openMapContactPopup(kind, label, value) {
     const ov = ensureMapContactPopup();

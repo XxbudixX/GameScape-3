@@ -1190,6 +1190,7 @@ function initChat() {
         history.forEach((msg, index) => appendMessageBubble(msg, shouldStack(msg, history[index - 1])));
         messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
+// Skapar och visar ett meddelande i chatten med avatar, svar, redigeringsstatus och tillgängliga åtgärder.
 
     function appendMessageBubble(msg, stacked = false) {
         const isSelf  = msg.from === currentUsername || msg.from === 'You';

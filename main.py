@@ -189,8 +189,10 @@ def me():
         'role':        session.get('role', False),
         'avatar_seed': avatar_seed
     })
+# Hanterar användarinloggning genom att verifiera användaruppgifter,
+# skapa en session och returnera användarinformation vid lyckad inloggning.
 
-@app.route('/api/login', methods=['POST'])
+@app.i('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
     if not data:
@@ -1251,6 +1253,7 @@ def update_map_presence():
     finally:
         cur.close(); conn.close()
 
+# Uppdaterar användarens synlighet på kartan och sparar statusen i databasen.
 
 @app.route('/api/visibility', methods=['POST'])
 def set_visibility():
@@ -1335,6 +1338,7 @@ def friends_list():
     finally:
         cur.close(); conn.close()
 
+# Hanterar vänförfrågningar genom att skicka, acceptera eller kontrollera befintliga förfrågningar mellan användare.
 
 @app.route('/api/friends/request', methods=['POST'])
 def friend_request():
@@ -1417,6 +1421,7 @@ def friend_accept():
     finally:
         cur.close(); conn.close()
 
+# Hanterar avböjning eller ignorering av en inkommande vänförfrågan genom att ta bort den från databasen.
 
 @app.route('/api/friends/decline', methods=['POST'])
 @app.route('/api/friends/ignore', methods=['POST'])
@@ -1541,6 +1546,7 @@ def chat_contacts():
     finally:
         cur.close(); conn.close()
 
+# Hämtar chatthistoriken mellan den inloggade användaren och en vän samt uppdaterar olästa meddelanden till lästa.
 
 @app.route('/api/chat/history/<partner_username>', methods=['GET'])
 def chat_history(partner_username):
