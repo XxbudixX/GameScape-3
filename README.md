@@ -83,6 +83,8 @@ gamescape/
         └── plus.svg
 ```
 
+Länk till vår Repo: https://github.com/XxbudixX/GameScape-3
+
 ---
 
 # Getting started

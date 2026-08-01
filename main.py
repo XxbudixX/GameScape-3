@@ -192,7 +192,7 @@ def me():
 # Hanterar användarinloggning genom att verifiera användaruppgifter,
 # skapa en session och returnera användarinformation vid lyckad inloggning.
 
-@app.i('/api/login', methods=['POST'])
+@app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
     if not data:
@@ -728,25 +728,36 @@ def account_update():
         try: conn.close()
         except: pass
 
-
+#Shows event attendees (only the amount, add list for creator later) and whether the user has joined.
 @app.route('/api/events/active', methods=['GET'])
 def events_active():
     conn, cur = connect_db()
     if conn is None:
         return jsonify({'success': False, 'events': []}), 500
     try:
-        # Delete events whose end_time has passed, then return only the live ones.
+        ensure_event_attendees_table(cur)
+        #Delete events whose end_time has passed, then clear out any attendee : changed how events are deleted to avoid leaving closed events like before. 
         cur.execute("DELETE FROM event WHERE end_time IS NOT NULL AND end_time < now()")
+        cur.execute("DELETE FROM event_attendees WHERE event_id NOT IN (SELECT event_id FROM event)")
         conn.commit()
+
+        
+        my_id = session.get('user_id') #None if not logged in, so guest users can still see events.
         cur.execute("""
             SELECT e.event_id, e.creator_id, e.title, e.datetime, e.appid,
-                   COALESCE(sg.name, '') AS game_name, e.end_time
+                   COALESCE(sg.name, '') AS game_name, e.end_time,
+                   COALESCE(ac.cnt, 0) AS attendee_count,
+                   CASE WHEN mj.user_id IS NOT NULL THEN true ELSE false END AS me_joined
             FROM event e
             LEFT JOIN steam_games sg ON sg.appid = e.appid
+            LEFT JOIN LATERAL (
+                SELECT COUNT(*) AS cnt FROM event_attendees ea WHERE ea.event_id = e.event_id
+            ) ac ON true
+            LEFT JOIN event_attendees mj ON mj.event_id = e.event_id AND mj.user_id = %s
             WHERE e.end_time IS NULL OR e.end_time > now()
             ORDER BY e.datetime DESC
             LIMIT 200
-        """)
+        """, (my_id,))
         rows = cur.fetchall()
         events = [{
             'id': r[0],
@@ -755,11 +766,76 @@ def events_active():
             'datetime': r[3].isoformat() if r[3] else None,
             'appid': r[4],
             'game_name': r[5] or '',
-            'end_time': r[6].isoformat() if r[6] else None
+            'end_time': r[6].isoformat() if r[6] else None,
+            'attendee_count': int(r[7] or 0),
+            'me_joined': bool(r[8])
         } for r in rows]
         return jsonify({'success': True, 'events': events})
     except Exception as e:
         return jsonify({'success': False, 'events': [], 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/events/<int:event_id>/attend', methods=['POST']) #Change later to allow joining multible events, but not at the same time / check overlapping events/times.
+def event_attend(event_id):
+    """Mark the current user as attending an event. joining twice
+    is a not an option. The host cannot join their own event."""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_event_attendees_table(cur)
+        #Checks if event is joinable.
+        cur.execute("""
+            SELECT creator_id FROM event
+            WHERE event_id = %s AND (end_time IS NULL OR end_time > now())
+        """, (event_id,))
+        row = cur.fetchone()
+        if not row:
+            return jsonify({'success': False, 'error': 'Event not found or already ended'}), 404
+        if row[0] == session['user_id']:
+            return jsonify({'success': False, 'error': "You're hosting this event"}), 400
+
+        cur.execute("""
+            INSERT INTO event_attendees (event_id, user_id)
+            VALUES (%s, %s)
+            ON CONFLICT (event_id, user_id) DO NOTHING
+        """, (event_id, session['user_id']))
+        cur.execute("SELECT COUNT(*) FROM event_attendees WHERE event_id = %s", (event_id,))
+        count = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({'success': True, 'attendee_count': int(count), 'me_joined': True})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
+    finally:
+        cur.close(); conn.close()
+
+
+@app.route('/api/events/<int:event_id>/attend', methods=['DELETE'])
+def event_unattend(event_id):
+    """Remove the current user from an event's attendee list."""
+    if 'user_id' not in session:
+        return jsonify({'success': False, 'error': 'Not logged in'}), 401
+    conn, cur = connect_db()
+    if conn is None:
+        return jsonify({'success': False, 'error': 'Database error'}), 500
+    try:
+        ensure_event_attendees_table(cur)
+        cur.execute(
+            "DELETE FROM event_attendees WHERE event_id = %s AND user_id = %s",
+            (event_id, session['user_id'])
+        )
+        cur.execute("SELECT COUNT(*) FROM event_attendees WHERE event_id = %s", (event_id,))
+        count = cur.fetchone()[0]
+        conn.commit()
+        return jsonify({'success': True, 'attendee_count': int(count), 'me_joined': False})
+    except Exception as e:
+        conn.rollback()
+        return jsonify({'success': False, 'error': str(e)}), 500
     finally:
         cur.close(); conn.close()
 
@@ -1011,6 +1087,27 @@ def ensure_friend_requests_table(cur):
             UNIQUE (requester_id, receiver_id)
         )
     """)
+
+
+
+_event_attendees_ready = False
+
+def ensure_event_attendees_table(cur):
+    # Records which users have marked themselves as "going" to an event.
+    # One row per (event, user); the composite primary key makes joining and count attendees per event.
+
+    global _event_attendees_ready
+    if _event_attendees_ready:
+        return
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS event_attendees (
+            event_id  INTEGER NOT NULL,
+            user_id   INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (event_id, user_id)
+        )
+    """)    # Should remove rows automatically if the user or event is deleted.
+    _event_attendees_ready = True
 
 
 _presence_columns_ready = False

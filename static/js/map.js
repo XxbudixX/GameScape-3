@@ -804,6 +804,23 @@ function _fmtDistance(km) {
     return Math.round(km) + ' km';
 }
 
+
+// Should currently be using the 5s refresh interval to update the countdown text in the event list. 
+function _fmtEventCountdown(evt, now = Date.now()) {
+    if (evt.startMs != null && now < evt.startMs) {
+        const mins = Math.max(1, Math.round((evt.startMs - now) / 60000));
+        return mins < 60 ? `starts in ${mins} min`
+                         : `starts in ${Math.floor(mins / 60)}h ${mins % 60}m`;
+    }
+    if (evt.endMs != null) {
+        const mins = Math.round((evt.endMs - now) / 60000);
+        if (mins <= 0) return 'ending now';
+        if (mins < 60) return `ends in ${mins} min`;
+        return `ends in ${Math.floor(mins / 60)}h ${mins % 60}m`;
+    }
+    return 'live now';
+}
+
 function initEventList() {
     const mapArea = document.querySelector('.map-area');
     if (!mapArea || document.getElementById('eventListToggle')) return;
@@ -822,8 +839,21 @@ function initEventList() {
             <span class="event-list-title">Live Events</span>
             <span class="event-list-sub">Nearest first</span>
         </div>
+        <div class="event-list-filter">
+            <input type="text" id="eventListFilter" class="event-list-filter-input"
+                   placeholder="Filter by game…" autocomplete="off">
+        </div>
         <div class="event-list-body" id="eventListBody"></div>`;
     mapArea.appendChild(panel);
+
+    // Typing in the filter narrows the list by game name (client-side, instant).
+    const filterInput = panel.querySelector('#eventListFilter');
+    if (filterInput) {
+        filterInput.addEventListener('input', () => {
+            eventFilterText = filterInput.value.trim().toLowerCase();
+            renderEventList();
+        });
+    }
 
     toggle.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -859,18 +889,23 @@ function renderEventList() {
     }
     if (!ref) { const c = map.getCenter(); ref = { lat: c.lat, lng: c.lng }; }
 
+    const filter = eventFilterText;
     const rows = activeEvents.map(evt => {
         if (!isEventLive(evt)) return null;   // scheduled-but-not-started events stay hidden
+        if (filter && !String(evt.gameName).toLowerCase().includes(filter)) return null;
         const player = players.find(p => p.id === evt.playerId);
         if (!player) return null;
         const dist = _distanceKm(ref.lat, ref.lng, player.lat, player.lng);
         return { evt, player, dist };
     }).filter(Boolean).sort((a, b) => a.dist - b.dist);
 
-    if (countEl) countEl.textContent = rows.length;
+    // The toggle badge always shows the true live count, ignoring the filter.
+    if (countEl) countEl.textContent = activeEvents.filter(e => isEventLive(e)).length;
 
     if (rows.length === 0) {
-        body.innerHTML = '<div class="event-list-empty">No live events right now</div>';
+        body.innerHTML = `<div class="event-list-empty">${
+            filter ? 'No live events match that game' : 'No live events right now'
+        }</div>`;
         return;
     }
 
@@ -880,6 +915,20 @@ function renderEventList() {
         const timeStr = evt.hasEnd
             ? `${fmtTime(evt.startHour, evt.startMin, evt.startAmPm)} – ${fmtTime(evt.endHour, evt.endMin, evt.endAmPm)}`
             : `${fmtTime(evt.startHour, evt.startMin, evt.startAmPm)} · 2hr`;
+        const countdown = _fmtEventCountdown(evt);
+        const going     = evt.attendeeCount || 0;
+
+        // Own event → "Hosting" label; otherwise a Join / Leave toggle button.
+        const isOwn = window.myUserId != null && evt.playerId === window.myUserId;
+        let attendBtn;
+        if (isOwn) {
+            attendBtn = `<span class="eli-host">Hosting</span>`;
+        } else if (evt.meJoined) {
+            attendBtn = `<button class="eli-attend joined" data-attend="${evt.id}" data-joined="1">Leave</button>`;
+        } else {
+            attendBtn = `<button class="eli-attend" data-attend="${evt.id}" data-joined="0">Join</button>`;
+        }
+
         return `
             <div class="event-list-item" data-idx="${i}">
                 <img class="eli-avatar" src="${avatar}" alt="">
@@ -889,10 +938,25 @@ function renderEventList() {
                         <span class="eli-dist">${_fmtDistance(r.dist)}</span>
                     </div>
                     <div class="eli-sub">${_eliEscape(evt.gameName)} · ${_eliEscape(player.gamertag)}</div>
-                    <div class="eli-time">${timeStr}</div>
+                    <div class="eli-time">${timeStr} · <span class="eli-count">${countdown}</span></div>
+                    <div class="eli-attend-row">
+                        <span class="eli-going">${going} going</span>
+                        ${attendBtn}
+                    </div>
                 </div>
             </div>`;
     }).join('');
+
+    // Join / Leave buttons: handled separately and stop propagation so tapping
+    // them doesn't also trigger the card's fly-to-event click below.
+    body.querySelectorAll('.eli-attend').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const id     = Number(btn.dataset.attend);
+            const joined = btn.dataset.joined === '1';
+            toggleAttend(id, joined, btn);
+        });
+    });
 
     body.querySelectorAll('.event-list-item').forEach(el => {
         el.addEventListener('click', () => {
@@ -904,6 +968,31 @@ function renderEventList() {
             showEventPopup(r.player, r.evt);
         });
     });
+}
+
+// Join or leave an event, then update local state and re-render so the count
+// and button flip instantly (the next map snapshot re-syncs from the server).
+async function toggleAttend(eventId, currentlyJoined, btn) {
+    const method = currentlyJoined ? 'DELETE' : 'POST';
+    if (btn) btn.disabled = true;
+    try {
+        const res  = await fetch(`/api/events/${eventId}/attend`, { method, credentials: 'same-origin' });
+        const data = await res.json().catch(() => ({ success: false }));
+        if (!res.ok || !data.success) {
+            alert(data.error || 'Could not update attendance.');
+            return;
+        }
+        const evt = activeEvents.find(e => e.id === eventId);
+        if (evt) {
+            evt.attendeeCount = data.attendee_count;
+            evt.meJoined      = data.me_joined;
+        }
+        renderEventList();
+    } catch (_) {
+        alert('Could not update attendance.');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
 }
 
 
@@ -1151,6 +1240,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Pre-loaded demo events so the map isn't empty on first visit
 let activeEvents = [];
+let eventFilterText = '';   // lowercased game-name filter for the event list
 
 // Single source of truth for "is this event running right now?"
 // now must be at/after start and before end. Used by the marker click,
@@ -1185,7 +1275,9 @@ async function loadActiveEventsFromServer() {
                 startHour, startMin, startAmPm,
                 startMs: ev.datetime ? new Date(ev.datetime).getTime() : null,
                 endMs:   ev.end_time ? new Date(ev.end_time).getTime() : null,
-                hasEnd: false
+                hasEnd: false,
+                attendeeCount: ev.attendee_count || 0,
+                meJoined: !!ev.me_joined
             };
         });
     } catch (_) {}
