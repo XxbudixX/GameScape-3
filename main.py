@@ -192,7 +192,7 @@ def me():
 # Hanterar användarinloggning genom att verifiera användaruppgifter,
 # skapa en session och returnera användarinformation vid lyckad inloggning.
 
-@app.i('/api/login', methods=['POST'])
+@app.route('/api/login', methods=['POST'])
 def login():
     data = request.get_json()
     if not data:
